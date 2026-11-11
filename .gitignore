@@ -2,3 +2,7 @@
 Firmware/build/*
 sdkconfig.old
 Firmware/managed_components/
+.venv/
+.local/
+UI/node_modules/
+UI/dist/

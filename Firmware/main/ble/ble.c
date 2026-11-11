@@ -8,6 +8,7 @@ bool initialized = false;
 
 int device_count = 0;
 SemaphoreHandle_t scan_complete_semaphore;
+static int requested_scan_seconds;
 
 // Function to add a device to the array
 static void add_device(esp_bd_addr_t bd_addr, const char *name, int rssi) {
@@ -113,6 +114,12 @@ void ble_stack_deinit(bool release_memory) {
 // GAP callback used for populating devices from BLE advertisements
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
   switch (event) {
+    case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT:
+      if (param->scan_param_cmpl.status != ESP_BT_STATUS_SUCCESS ||
+          esp_ble_gap_start_scanning(requested_scan_seconds) != ESP_OK) {
+        xSemaphoreGive(scan_complete_semaphore);
+      }
+      break;
     case ESP_GAP_BLE_SCAN_RESULT_EVT: {
       switch (param->scan_rst.search_evt) {
         case ESP_GAP_SEARCH_INQ_RES_EVT: {
@@ -149,17 +156,21 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
 
 // Function to initiate BLE scanning for a specified duration (in seconds) with a void callback
 void start_ble_scan(int scan_duration_seconds, void (*callback)()) {
-  scan_complete_semaphore = xSemaphoreCreateBinary();
+  // Keep the semaphore alive for any late completion callback.
+  if (!scan_complete_semaphore) scan_complete_semaphore = xSemaphoreCreateBinary();
+  if (!scan_complete_semaphore) return;
+  while (xSemaphoreTake(scan_complete_semaphore, 0) == pdTRUE) {}
+  requested_scan_seconds = scan_duration_seconds;
   device_count = 0;
 
   esp_ble_gap_register_callback(esp_gap_cb);
   esp_ble_gap_set_scan_params(&default_scan_params);
 
   ESP_LOGI(TAG, "Starting BLE scan for %d seconds", scan_duration_seconds);
-  esp_ble_gap_start_scanning(scan_duration_seconds);
+
 
   // Wait for the semaphore to be given when scanning is complete
-  if (xSemaphoreTake(scan_complete_semaphore, (scan_duration_seconds) * 1000 / portTICK_PERIOD_MS) + 1 == pdTRUE) {
+  if (xSemaphoreTake(scan_complete_semaphore, pdMS_TO_TICKS((scan_duration_seconds + 2) * 1000)) == pdTRUE) {
     if (callback != NULL) {
       callback();
     } else {
@@ -174,5 +185,5 @@ void start_ble_scan(int scan_duration_seconds, void (*callback)()) {
     }
   }
 
-  vSemaphoreDelete(scan_complete_semaphore);
+  esp_ble_gap_stop_scanning();
 }

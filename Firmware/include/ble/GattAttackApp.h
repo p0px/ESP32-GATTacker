@@ -36,6 +36,7 @@ struct GattAttackWebEventParams {
   const char *action;
   int id;
   const char *hook_ret;
+  uint32_t request_id;
   bool enable;
   const char *mac;
 };

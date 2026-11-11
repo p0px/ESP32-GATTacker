@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 import Grid from '@mui/material/Grid';
 import Button from '@mui/material/Button';
@@ -28,8 +28,18 @@ function parseGattOperation(m) {
 export const GattAttackApp = () => {
   const [state, setState] = useState(-1);
   const [hooksEnabled, setHooksEnabled] = useState(false);
+  const [hookError, setHookError] = useState('');
   const [target, setTarget] = useState(false);
   const [messages, setMessages] = useState([]);
+  const pendingMessages = useRef([]);
+  const queueMessage = (message) => {
+    if (pendingMessages.current.length >= 1000) pendingMessages.current.shift();
+    pendingMessages.current.push(message);
+  };
+  const clearMessages = (value) => {
+    pendingMessages.current = [];
+    setMessages(value);
+  };
   const [results, setResults] = useState([]);
   const [manualMac, setManualMac] = useState('');
 
@@ -94,6 +104,8 @@ export const GattAttackApp = () => {
       setup();
     }
 
+    if ('hook_error' in data) setHookError(data.hook_error);
+
     if ('hooks_enabled' in data) {
       setHooksEnabled(data.hooks_enabled);
     }
@@ -122,32 +134,32 @@ export const GattAttackApp = () => {
     }
 
     if (data.msg) {
-      setMessages(prev => [...prev, data]);
+      queueMessage(data);
     }
 
     if (data.operation) {
-      setMessages(prev => [
-        ...prev,
-        { msg: parseGattOperation(data), ...data }
-      ]);
+      queueMessage({ msg: parseGattOperation(data), ...data });
     }
 
-    if (data.onRead) {
-      const hook_ret = window.hook_read(data);
-      window.socket.send(JSON.stringify({
-        opt: app.opt,
-        action: 'hookret',
-        hook_ret,
-      }));
-    }
-
-    if (data.onWrite) {
-      const hook_ret = window.hook_write(data);
-      window.socket.send(JSON.stringify({
-        opt: app.opt,
-        action: 'hookret',
-        hook_ret,
-      }));
+    if (data.onRead || data.onWrite) {
+      let hook_ret = data.value;
+      try {
+        const result = (data.onRead ? window.hook_read : window.hook_write)(data);
+        if (typeof result === 'string' && result.length <= 1034 &&
+            result.length % 2 === 0 && /^[0-9a-fA-F]*$/.test(result)) {
+          hook_ret = result;
+        }
+      } catch (err) {
+        console.error('Hook failed; preserving original value', err);
+      }
+      if (window.socket?.readyState === 1) {
+        window.socket.send(JSON.stringify({
+          opt: app.opt,
+          action: 'hookret',
+          request_id: data.request_id,
+          hook_ret,
+        }));
+      }
     }
   }
 
@@ -168,10 +180,23 @@ export const GattAttackApp = () => {
 
   useEffect(() => {
     setup();
+    // Rendering traffic logs must not compete with every hook reply.
+    const statusTimer = setInterval(() => {
+      if (window.socket?.readyState === 1)
+        window.socket.send(JSON.stringify({ opt: app.opt, action: 'status' }));
+    }, 2000);
+    const timer = setInterval(() => {
+      if (!pendingMessages.current.length) return;
+      const batch = pendingMessages.current;
+      pendingMessages.current = [];
+      setMessages(prev => [...prev, ...batch].slice(-1000));
+    }, 100);
+    return () => { clearInterval(timer); clearInterval(statusTimer); };
   }, []);
 
   return (
     <>
+      {hookError && <Typography color='error' role='alert' sx={{ mb: 2 }}>{hookError}</Typography>}
       {state === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 400 }}>
           <Button
@@ -266,7 +291,7 @@ export const GattAttackApp = () => {
           <MitmPanel
             target={target}
             messages={messages}
-            setMessages={setMessages}
+            setMessages={clearMessages}
             hooksEnabled={hooksEnabled}
           />
         </>

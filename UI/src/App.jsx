@@ -129,7 +129,6 @@ export const Layout = () => {
       };
 
       socket.onmessage = (message) => {
-        console.log('Message from server ', JSON.parse(message.data));
         const res = JSON.parse(message.data);
 
         if (res.hasOwnProperty('success')) {

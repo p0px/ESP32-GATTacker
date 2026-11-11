@@ -1,59 +1,86 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_err.h"
+#include <atomic>
+#include <new>
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 
 #include "ble/GattAttackApp.h"
 
 #define TAG "GattAttackApp"
 
-bool hooks_enabled = false;
-bool hook_block = false;
-char *hook_ret = NULL;
-
+static std::atomic<bool> hooks_enabled{false};
+static std::atomic<int> hook_fault{0}; // 1 = deadline, 2 = transport queue
+static portMUX_TYPE hook_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t next_hook_id = 0;
+static uint32_t pending_hook_id = 0;
+static char *hook_reply = nullptr;
+// Created on the Bluetooth callback task and retained for late replies.
+static SemaphoreHandle_t hook_signal = nullptr;
+static constexpr uint32_t HOOK_TIMEOUT_MS = 50;
 
 TaskHandle_t gattTaskHandle = NULL;
 GattAttackState gattAttackState = GATT_ATTACK_STATE_HOME;
 
 bool should_run_hooks() {
-  if (num_clients == 0 || !hooks_enabled) {
-    return false;
-  }
-
-  return true;
-};
+  return ws_has_clients() && hooks_enabled.load();
+}
 
 char* run_hook(const char *type, const char *uuid, const char *value) {
-  cJSON *res = cJSON_CreateObject();
-
-  if (strcmp(type, "write") == 0) {
-    cJSON_AddBoolToObject(res, "onWrite", true);
-  } else {
-    cJSON_AddBoolToObject(res, "onRead", true);
+  if (!value || !hooks_enabled.load()) return nullptr;
+  if (!hook_signal) hook_signal = xSemaphoreCreateBinary();
+  if (!hook_signal) return nullptr;
+  portENTER_CRITICAL(&hook_mux);
+  if (pending_hook_id) {
+    portEXIT_CRITICAL(&hook_mux);
+    return nullptr; // Caller keeps its original payload.
   }
-  
+  // A late signal from a timed-out request must not satisfy this request.
+  xSemaphoreTake(hook_signal, 0);
+  if (++next_hook_id > INT32_MAX) next_hook_id = 1;
+  const uint32_t id = next_hook_id;
+  pending_hook_id = id;
+  portEXIT_CRITICAL(&hook_mux);
+
+  cJSON *res = cJSON_CreateObject();
+  cJSON_AddBoolToObject(res, strcmp(type, "write") == 0 ? "onWrite" : "onRead", true);
+  cJSON_AddNumberToObject(res, "request_id", id);
   cJSON_AddStringToObject(res, "uuid", uuid);
   cJSON_AddStringToObject(res, "value", value);
-  char *json = cJSON_Print(res);
-
-  // send to ws and wait
-  msg_clients(json);
-  free(json);
+  char *json = cJSON_PrintUnformatted(res);
   cJSON_Delete(res);
+  const bool sent = json && try_msg_clients(json, true);
+  free(json);
 
-  int timeout = 0;
-  hook_block = true;
-  while (hook_block) {
-    // return original value if timeout of 800ms
-    if (timeout >= 800) {
-      hook_ret = strdup(value);
-      hook_block = false;
+  const TickType_t started = xTaskGetTickCount();
+  const TickType_t budget = pdMS_TO_TICKS(HOOK_TIMEOUT_MS);
+  for (;;) {
+    portENTER_CRITICAL(&hook_mux);
+    const TickType_t elapsed = xTaskGetTickCount() - started;
+    const bool cancelled = !hooks_enabled.load();
+    if (hook_reply || !sent || cancelled || elapsed >= budget) {
+      char *reply = hook_reply;
+      hook_reply = nullptr;
+      pending_hook_id = 0;
+      const bool failed = !reply && !cancelled;
+      if (failed) {
+        hooks_enabled = false;
+        hook_fault = sent ? 1 : 2;
+      }
+      portEXIT_CRITICAL(&hook_mux);
+      if (failed) {
+        send_output(sent ? "Hooks disabled: browser exceeded 50 ms deadline; original payload forwarded"
+                         : "Hooks disabled: request could not be queued; original payload forwarded");
+        GattAttackApp::sendState(gattAttackState);
+      }
+      return reply;
     }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    timeout += 10;
+    portEXIT_CRITICAL(&hook_mux);
+    // The HTTP reply wakes us immediately; no polling interval is added.
+    xSemaphoreTake(hook_signal, budget - elapsed);
   }
-
-  return hook_ret;
-};
+}
 
 void send_output(std::string output, bool isJSON) {
   if (isJSON) { 
@@ -80,7 +107,15 @@ void GattAttackApp::scan(void* params) {
 void GattAttackApp::sendState(int state) {
   cJSON *res = cJSON_CreateObject();
   cJSON_AddNumberToObject(res, "state", state);
-  cJSON_AddBoolToObject(res, "hooks_enabled", hooks_enabled);
+  cJSON_AddNumberToObject(res, "free_heap", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+  cJSON_AddNumberToObject(res, "min_free_heap", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+  cJSON_AddNumberToObject(res, "uptime_ms", esp_timer_get_time() / 1000);
+  cJSON_AddBoolToObject(res, "hooks_enabled", hooks_enabled.load());
+  const int fault = hook_fault.load();
+  cJSON_AddStringToObject(res, "hook_error", fault == 1
+      ? "Hooks disabled: browser exceeded 50 ms; original traffic passes through. Re-enable hooks to retry."
+      : fault == 2 ? "Hooks disabled: request queue unavailable; original traffic passes through. Re-enable hooks to retry."
+                   : "");
   char *json = cJSON_Print(res);
 
   msg_clients(json);
@@ -90,10 +125,6 @@ void GattAttackApp::sendState(int state) {
 };
 
 void GattAttackApp::scan() {
-  if (gattAttackState == GATT_ATTACK_STATE_SCANNING) {
-    return;
-  }
-  gattAttackState = GATT_ATTACK_STATE_SCANNING;
   GattAttackApp::sendState((int)gattAttackState);
   
   // scan for devices
@@ -119,6 +150,7 @@ void GattAttackApp::scan() {
 };
 
 void GattAttackApp::stop_attack() {
+  if (gattAttackState == GATT_ATTACK_STATE_SCANNING) return;
   stop_gatt_attack();
 
   if (gattTaskHandle != NULL) { 
@@ -131,12 +163,17 @@ void GattAttackApp::stop_attack() {
 };
 
 void GattAttackApp::start_attack(esp_bd_addr_t target) {
-  GattAttackParams* params = new GattAttackParams();
+  if (gattTaskHandle || gattAttackState == GATT_ATTACK_STATE_SCANNING) return;
+  GattAttackParams* params = new (std::nothrow) GattAttackParams();
+  if (!params) return;
   memcpy(params->target, target, sizeof(esp_bd_addr_t));
 
-  esp_err_t ret = xTaskCreate(&GattAttackApp::atk_task, "gatk", 20000, params, 0, &gattTaskHandle);
-  if (ret == ESP_FAIL) {
-    ESP_LOGE(TAG, "gatk task err: %s", esp_err_to_name(ret));
+  BaseType_t ret = xTaskCreate(&GattAttackApp::atk_task, "gatk", 20000, params, 0, &gattTaskHandle);
+  if (ret != pdPASS) {
+    delete params;
+    gattTaskHandle = nullptr;
+    ESP_LOGE(TAG, "Cannot allocate attack task");
+    return;
   }
   gattAttackState = GATT_ATTACK_STATE_START;
   GattAttackApp::sendState((int)gattAttackState);
@@ -171,7 +208,7 @@ void GattAttackApp::webEvent(GattAttackWebEventParams *ps) {
     }
 
     // Validate ID sent
-    if (ps->id < 0 || ps->id > device_count) {
+    if (ps->id < 0 || ps->id >= device_count) {
       cJSON *root = cJSON_CreateObject();
       cJSON_AddBoolToObject(root, "success", false);
       cJSON_AddStringToObject(root, "error", "Invalid Device ID");
@@ -196,8 +233,12 @@ void GattAttackApp::webEvent(GattAttackWebEventParams *ps) {
   }
 
   if (strcmp(ps->action, "scan") == 0) {
-    // Start scan task
-    xTaskCreate(&GattAttackApp::scan, "gatk", 4000, NULL, 0, NULL);
+    if (gattTaskHandle || gattAttackState == GATT_ATTACK_STATE_SCANNING) return;
+    gattAttackState = GATT_ATTACK_STATE_SCANNING;
+    if (xTaskCreate(&GattAttackApp::scan, "gatk", 6000, NULL, 0, NULL) != pdPASS) {
+      gattAttackState = GATT_ATTACK_STATE_HOME;
+      sendState(gattAttackState);
+    }
     return;
   }
 
@@ -237,13 +278,30 @@ void GattAttackApp::webEvent(GattAttackWebEventParams *ps) {
   }
   
   if (strcmp(ps->action, "hookret") == 0) {
-    hook_block = false;
-    hook_ret = strdup(ps->hook_ret);
+    if (!ps->hook_ret || !ps->request_id) return;
+    char *reply = strdup(ps->hook_ret);
+    if (!reply) return;
+    bool accepted = false;
+    portENTER_CRITICAL(&hook_mux);
+    if (pending_hook_id == ps->request_id && !hook_reply) {
+      hook_reply = reply;
+      reply = nullptr;
+      accepted = true;
+    }
+    portEXIT_CRITICAL(&hook_mux);
+    if (accepted) xSemaphoreGive(hook_signal);
+    free(reply);
     return;
   }
 
   if (strcmp(ps->action, "enable_hooks") == 0) {
+    hook_fault = 0;
     hooks_enabled = ps->enable;
+    // Wake an in-flight request when the user disables hooks.
+    portENTER_CRITICAL(&hook_mux);
+    SemaphoreHandle_t signal = pending_hook_id ? hook_signal : nullptr;
+    portEXIT_CRITICAL(&hook_mux);
+    if (!ps->enable && signal) xSemaphoreGive(signal);
     char out[32];
     snprintf(out, sizeof(out), "hooks %s", hooks_enabled ? "enabled" : "disabled");
     send_output(out);

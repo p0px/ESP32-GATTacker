@@ -62,8 +62,7 @@ struct clone_t {
   uint16_t victim_client_conn_id;
 
   uint16_t server_conn_id;
-  uint16_t server_trans_id;
-  bool server_last_write_needs_rsp;
+  uint32_t server_trans_id;
 
   uint16_t target_gattc_mtu;
 

@@ -1,4 +1,6 @@
 #include "wifi/ws.h"
+#include <atomic>
+#include <unistd.h>
 
 #define TAG "WS"
 
@@ -12,6 +14,7 @@ struct async_resp_arg {
   httpd_handle_t hd;
   int fd;
   char *res;
+  bool broadcast;
 };
 
 struct ws_client_t {
@@ -23,6 +26,18 @@ int num_clients = 0;
 ws_client_t *clients;
 
 static SemaphoreHandle_t ws_mutex = NULL;
+static std::atomic<unsigned> pending_broadcasts{0};
+static std::atomic<size_t> pending_bytes{0};
+static constexpr size_t MAX_WS_FRAME = 4096;
+static constexpr unsigned MAX_PENDING_BROADCASTS = 4;
+
+bool ws_has_clients() {
+  if (!ws_mutex) return false;
+  if (xSemaphoreTake(ws_mutex, 0) != pdTRUE) return false;
+  bool connected = num_clients > 0;
+  xSemaphoreGive(ws_mutex);
+  return connected;
+}
 
 void ws_init(void) {
   ws_mutex = xSemaphoreCreateMutex();
@@ -82,6 +97,7 @@ static void remove_client_by_fd(int fd) {
 
 void ws_on_close_handler(httpd_handle_t hd, int sockfd) {
   remove_client_by_fd(sockfd);
+  close(sockfd);
 }
 
 static void ws_async_send(void *arg) {
@@ -97,17 +113,28 @@ static void ws_async_send(void *arg) {
     ws_pkt.len = strlen(resp_arg->res);
     ws_pkt.type = HTTPD_WS_TYPE_TEXT;
     
-    httpd_ws_send_frame_async(hd, fd, &ws_pkt);
+    if (httpd_ws_get_fd_info(hd, fd) == HTTPD_WS_CLIENT_WEBSOCKET) {
+      httpd_ws_send_frame_async(hd, fd, &ws_pkt);
+    }
+    if (resp_arg->broadcast) pending_bytes -= ws_pkt.len + 1;
     free(resp_arg->res);
   }
 
+  if (resp_arg->broadcast) --pending_broadcasts;
   free(resp_arg);
 }
 
-void msg_clients(std::string msg) {
-  if (ws_mutex) xSemaphoreTake(ws_mutex, portMAX_DELAY);
+bool try_msg_clients(const char *msg, bool hook_request) {
+  if (!msg) return false;
+  const size_t length = strlen(msg);
+  if (length > 16384 || !ws_mutex) return false;
+  if (xSemaphoreTake(ws_mutex, 0) != pdTRUE) return false;
+  bool queued = false;
 
   for (int i = 0; i < num_clients; i++) {
+    // Reserve one slot for a hook when telemetry has filled its allowance.
+    if (pending_broadcasts.load() >= MAX_PENDING_BROADCASTS + (hook_request ? 1U : 0U) ||
+        pending_bytes.load() + length + 1 > 32768) break;
     ws_client_t cli = clients[i];
     struct async_resp_arg *resp_arg = (struct async_resp_arg *)malloc(sizeof(struct async_resp_arg));
     if (resp_arg == NULL) {
@@ -117,23 +144,39 @@ void msg_clients(std::string msg) {
 
     resp_arg->hd = cli.hd;
     resp_arg->fd = cli.fd;
-    resp_arg->res = (char *)malloc(msg.size() + 1);
+    resp_arg->res = (char *)malloc(length + 1);
     if (resp_arg->res == NULL) {
       ESP_LOGE(TAG, "Failed to allocate memory for response");
       free(resp_arg);
       continue;
     }
-    strcpy(resp_arg->res, msg.c_str());
+    memcpy(resp_arg->res, msg, length + 1);
+    pending_bytes += length + 1;
+    resp_arg->broadcast = true;
+    ++pending_broadcasts;
 
     esp_err_t ret = httpd_queue_work(cli.hd, ws_async_send, resp_arg);
     if (ret != ESP_OK) {
+      --pending_broadcasts;
+      pending_bytes -= length + 1;
       ESP_LOGI(TAG, "Failed to queue work for async response");
       free(resp_arg->res);
       free(resp_arg);
+    } else {
+      queued = true;
     }
   }
 
-  if (ws_mutex) xSemaphoreGive(ws_mutex);
+  xSemaphoreGive(ws_mutex);
+  return queued;
+}
+
+void msg_clients(const char *msg) {
+  try_msg_clients(msg);
+}
+
+void msg_clients(const std::string &msg) {
+  msg_clients(msg.c_str());
 }
 
 esp_err_t ws_handler(httpd_req_t *req) {
@@ -160,6 +203,8 @@ esp_err_t ws_handler(httpd_req_t *req) {
     return ret;
   }
   
+  if (ws_pkt.len > MAX_WS_FRAME) return ESP_ERR_INVALID_SIZE;
+
   if (ws_pkt.len) {
     buf = (uint8_t *)calloc(1, ws_pkt.len + 1);
     if (buf == NULL) {
@@ -183,6 +228,8 @@ esp_err_t ws_handler(httpd_req_t *req) {
       free(buf);
       return ESP_ERR_NO_MEM;
     }
+    resp_arg->res = nullptr;
+    resp_arg->broadcast = false;
     resp_arg->hd = req->handle;
     resp_arg->fd = httpd_req_to_sockfd(req);
 
@@ -271,6 +318,7 @@ esp_err_t ws_handler(httpd_req_t *req) {
           if (cJSON_IsString(item) && item->valuestring != NULL) {
             GattAttackWebEventParams ps;
             ps.id = -1;
+            ps.request_id = 0;
             ps.mac = NULL;
             ps.hook_ret = NULL; // initialize other fields for safety
             ps.enable = false;
@@ -280,6 +328,11 @@ esp_err_t ws_handler(httpd_req_t *req) {
             cJSON *id = cJSON_GetObjectItem(root, "id");
             if (cJSON_IsNumber(id) && id != NULL) {
               ps.id = id->valueint;
+            }
+
+            cJSON *request_id = cJSON_GetObjectItem(root, "request_id");
+            if (cJSON_IsNumber(request_id) && request_id->valueint > 0) {
+              ps.request_id = request_id->valueint;
             }
 
             cJSON *hook_ret = cJSON_GetObjectItem(root, "hook_ret");
