@@ -1,73 +1,52 @@
-import { useState } from 'react';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
-import Typography from '@mui/material/Typography';
+import { useState } from "react";
+import { Box, Typography } from "@mui/material";
+import { isHookValue } from "./hookValue";
 
-const defaultRead = `
-(function hookRead({ uuid, value }) {
+const defaultRead = `(function hookRead({ uuid, value }) {
   // your code here
   return value;
-})
-`;
-
-const defaultWrite = `
-(function hookWrite({ uuid, value }) {
+})`;
+const defaultWrite = `(function hookWrite({ uuid, value }) {
   // your code here
   return value;
-})
-`;
+})`;
 
-const testHook = (i) => {
-  if (!/^[0-9a-fA-F]+$/.test(i) || i.length % 2 !== 0) {
-    throw new Error('Output is not a valid hex-encoded string');
-  }
-  return true;
-};
-
+// Preserve the upstream browser hook contract and live validation behavior.
 if (!window.hook_read) window.hook_read = eval(defaultRead);
 if (!window.hook_write) window.hook_write = eval(defaultWrite);
 
-export const HookEditor = ({
-  hook = 'read'
-}) => {
-  const [error, setError] = useState(false);
-  const [code, setCode] = useState(window[`hook_${hook}`]?.toString() || (hook === 'read' ? defaultRead : defaultWrite));
-
-  const handleChange = (e) => {
-    setCode(e.target.value);
+export function HookEditor({ hook = "read" }) {
+  const [error, setError] = useState("");
+  const [code, setCode] = useState(window[`hook_${hook}`]?.toString() ||
+    (hook === "read" ? defaultRead : defaultWrite));
+  const label = hook === "read" ? "Read Hook" : "Write Hook";
+  const handleChange = event => {
+    setCode(event.target.value);
     try {
-      const test = eval(`(${e.target.value})`)({ uuid: 'test', 'value': '01020304' });
-      if (testHook(test)) {
-        window[`hook_${hook}`] = eval(`(${e.target.value})`);
-      }
-
-      setError(false);
-    } catch (err) {
-      setError(`Invalid function ${err}`);
+      const candidate = eval(`(${event.target.value})`);
+      if (typeof candidate !== "function") throw new Error("Expected a function");
+      if (!isHookValue(candidate({ uuid: "test", value: "01020304" })))
+        throw new Error("Return an even-length hex string, up to 517 bytes; empty is allowed");
+      window[`hook_${hook}`] = candidate;
+      setError("");
+    } catch (failure) {
+      setError(`Invalid function ${failure}`);
     }
   };
-
-  return (
-    <Card>
-      <CardContent sx={{ p: 2 }}>
-        {error && <Typography>{error}</Typography>}
-        <div style={{ display: 'grid', gap: '1rem' }}>
-          <textarea
-            value={code}
-            onChange={handleChange}
-            style={{
-              backgroundColor: '#0f172a',
-              color: '#f8fafc',
-              padding: '1rem',
-              borderRadius: '0.375rem',
-              minHeight: '200px',
-              width: '100%'
-            }}
-          />
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
-export default HookEditor;
+  return <Box sx={{ minWidth: 0 }}>
+    <Box component="textarea" aria-label={`${label} code`} aria-invalid={Boolean(error)}
+      aria-describedby={`${hook}-hook-feedback`} value={code} onChange={handleChange}
+      rows={7} wrap="off" spellCheck={false} autoCapitalize="off" autoCorrect="off"
+      sx={{ display: "block", width: "100%", boxSizing: "border-box", p: 1.5,
+        minHeight: 140, maxHeight: 360, resize: "vertical", overflow: "auto",
+        bgcolor: "background.default", color: "text.primary", fontFamily: "inherit",
+        fontSize: 12, lineHeight: 1.6, borderRadius: 1, border: "1px solid",
+        borderColor: error ? "error.main" : "divider",
+        "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main",
+          outlineOffset: 1 } }} />
+    <Typography id={`${hook}-hook-feedback`} variant="caption" display="block"
+      color={error ? "error.main" : "text.secondary"} sx={{ mt: 1, overflowWrap: "anywhere" }}>
+      {error ? `${error}. Last valid hook remains active.` : "Edits apply when valid."}
+    </Typography>
+  </Box>;
+}

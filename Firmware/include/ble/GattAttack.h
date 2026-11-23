@@ -26,23 +26,23 @@ extern "C" {
 #include <inttypes.h>
 
 /* Structs */
-struct desc_t {
+typedef struct desc_t {
   esp_bt_uuid_t desc_uuid;
   uint16_t desc_handle;
   esp_attr_value_t value;
   esp_gatt_perm_t perm;
-};
+} desc_t;
 
-struct char_t {
+typedef struct char_t {
   esp_bt_uuid_t char_uuid;
   uint16_t char_handle;
   esp_gatt_char_prop_t property;
   desc_t *descs;
   uint8_t num_descs;
   esp_attr_value_t value;
-};
+} char_t;
 
-struct service_t {
+typedef struct service_t {
   esp_bt_uuid_t service_uuid;
   uint16_t service_handle;
   uint16_t start_handle;
@@ -51,9 +51,9 @@ struct service_t {
   char_t *chars;
   uint8_t num_chars;
   uint8_t num_handles;
-};
+} service_t;
 
-struct clone_t {
+typedef struct clone_t {
   esp_bd_addr_t target;
   uint16_t gatts_if;
   uint16_t gattc_if;
@@ -69,38 +69,22 @@ struct clone_t {
   service_t *services;
   uint8_t num_services;
   esp_bd_addr_t target_bda;
-} clone;
+} clone_t;
 
 typedef struct {
   uint8_t *prepare_buf;
   int prepare_len;
 } prepare_type_env_t;
 
-esp_ble_scan_params_t ble_scan_params = {
-  .scan_type = BLE_SCAN_TYPE_ACTIVE,
-  .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
-  .scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL,
-  .scan_interval = 0x50,
-  .scan_window = 0x30,
-  .scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE
-};
-
-esp_ble_adv_params_t adv_params = {
-  .adv_int_min        = 0x20,
-  .adv_int_max        = 0x20,
-  .adv_type           = ADV_TYPE_IND,
-  .own_addr_type      = BLE_ADDR_TYPE_PUBLIC,
-  //.peer_addr            =
-  //.peer_addr_type       =
-  .channel_map        = ADV_CHNL_ALL,
-  .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
-};
+extern clone_t clone;
+extern esp_ble_scan_params_t ble_scan_params;
+extern esp_ble_adv_params_t adv_params;
 
 /* Function Declarations */
-char* bytes_to_hex_string(const uint8_t *data, size_t data_len);
-void print_uuid(esp_bt_uuid_t uuid, char* out);
+char *bytes_to_hex_string(const uint8_t *data, size_t data_len);
+void print_uuid(esp_bt_uuid_t uuid, char *out);
 void start_gatt_attack(uint8_t *target);
-void stop_gatt_attack();
+void stop_gatt_attack(void);
 
 #ifdef __cplusplus
 }

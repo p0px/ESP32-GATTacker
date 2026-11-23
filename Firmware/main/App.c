@@ -1,9 +1,11 @@
 #include "App.h"
+#include "wifi/routes.h"
+#include "wifi/wifi.h"
 #include "dns_server.h"
 
 #define TAG "App"
 
-void setup() {
+void setup(void) {
   read_settings();
   wifi_init_softap();
   dns_server_config_t config = DNS_SERVER_CONFIG_SINGLE("*", "WIFI_AP_DEF");
@@ -16,4 +18,4 @@ void setup() {
   }
 
   ESP_LOGI(TAG, "HTTP server started");
-};
+}

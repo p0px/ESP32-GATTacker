@@ -2,11 +2,12 @@
 #include "freertos/task.h"
 
 #include "App.h"
+#include "esp_log.h"
 #include "esp_system.h"
 
 #define TAG "main"
 
-extern "C" void app_main() {
+void app_main(void) {
   ESP_LOGI(TAG, "Reset reason: %d", (int)esp_reset_reason());
   setup();
 

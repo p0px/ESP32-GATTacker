@@ -11,6 +11,12 @@
 #include "wifi/ws.h"
 #include "settings.h"
 
-esp_err_t start_rest_server();
+#ifdef __cplusplus
+extern "C" {
+#endif
+esp_err_t start_rest_server(void);
+#ifdef __cplusplus
+}
+#endif
 
 #endif

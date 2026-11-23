@@ -29,11 +29,13 @@ import InfoIcon from '@mui/icons-material/Info';
 import Container from '@mui/material/Container';
 import Grid from '@mui/material/Grid';
 import Alert from '@mui/material/Alert';
+import useMediaQuery from "@mui/material/useMediaQuery";
 
 // Custom Components
 import Home from './components/Home';
 import Settings from './components/Settings';
 import About from './components/About';
+import { BoardSessionProvider } from "./components/BLE/BoardSessionProvider";
 
 const drawerWidth = 200;
 
@@ -85,7 +87,7 @@ const AppBar = styled(MuiAppBar, {
   }),
 }));
 
-const Drawer = styled(MuiDrawer, { shouldForwardProp: (prop) => prop !== 'open' })(
+const Drawer = styled(MuiDrawer)(
   ({ theme, open }) => ({
     width: drawerWidth,
     flexShrink: 0,
@@ -103,6 +105,7 @@ const Drawer = styled(MuiDrawer, { shouldForwardProp: (prop) => prop !== 'open' 
 );
 
 export const Layout = () => {
+  const mobile = useMediaQuery("(max-width:599px)");
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [msg, setMsg] = useState('');
@@ -116,7 +119,9 @@ export const Layout = () => {
 
   const setupSocket = () => {
     if (!window.socket || window.socket.readyState === 3) {
-      const socket = new WebSocket(`ws://1.3.3.7/ws`);
+      const socketUrl = new URL("/ws", window.location.href);
+      socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(socketUrl.href);
 
       socket.onopen = () => {
         console.log('WebSocket connection established');
@@ -158,6 +163,7 @@ export const Layout = () => {
 
       socket.onclose = () => {
         console.log('WebSocket connection closed');
+        window.socketCallback?.({ connected: false });
         setMsg('No Connection');
         setAlert('error');
         setShowAlert(true);
@@ -180,8 +186,8 @@ export const Layout = () => {
   }, []);
 
   return (
-    <Box sx={{ display: 'flex' }}>
-      <AppBar position='fixed' open={open}>
+    <BoardSessionProvider><Box sx={{ display: 'flex' }}>
+      <AppBar position='fixed' open={open && !mobile}>
         <Toolbar>
           <IconButton
             color='inherit'
@@ -189,7 +195,7 @@ export const Layout = () => {
             onClick={() => setOpen(true)}
             edge='start'
             sx={{
-              marginRight: 5,
+              marginRight: { xs: 1, sm: 5 },
               ...(open && { display: 'none' }),
             }}
           >
@@ -200,7 +206,8 @@ export const Layout = () => {
           </Typography>
         </Toolbar>
       </AppBar>
-      <Drawer variant='permanent' open={open}>
+      <Drawer variant={mobile ? "temporary" : "permanent"} open={open}
+        onClose={() => setOpen(false)} ModalProps={{ keepMounted: true }}>
         <DrawerHeader>
           <IconButton onClick={() => setOpen(false)}>
             <ChevronLeftIcon />
@@ -214,7 +221,7 @@ export const Layout = () => {
               <ListItem key={text} disablePadding sx={{ display: 'block' }}>
                 <ListItemButton
                   selected={window.location.pathname.split('/')[1] === `${text.toLowerCase()}`}
-                  onClick={() => navigate(`/${text.toLowerCase()}`)}
+                  onClick={() => { navigate(`/${text.toLowerCase()}`); if (mobile) setOpen(false); }}
                   sx={{
                     minHeight: 48,
                     justifyContent: open ? 'initial' : 'center',
@@ -239,7 +246,7 @@ export const Layout = () => {
           ))}
         </List>
       </Drawer>
-      <Box component='main' sx={{ flexGrow: 1, p: 3 }}>
+      <Box component='main' sx={{ flexGrow: 1, minWidth: 0, p: { xs: 1.5, sm: 3 } }}>
         <DrawerHeader />
         <Container disableGutters maxWidth={false}>
           <Grid container>
@@ -258,7 +265,7 @@ export const Layout = () => {
           </Grid>
         </Container>
       </Box>
-    </Box>
+    </Box></BoardSessionProvider>
   );
 };
 

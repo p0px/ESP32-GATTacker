@@ -1,8 +1,4 @@
-# Collect all source files
-file(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/main/*.*)
-
-# Register the component and add the parent include directory
-idf_component_register(SRCS ${app_sources}
+idf_component_register(SRC_DIRS "." "ble" "wifi"
                        INCLUDE_DIRS "../include")
 
 # for bypassing not being able to send deauth packets

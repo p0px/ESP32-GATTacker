@@ -6,7 +6,8 @@
   #define ENABLE_CAPTIVE_DHCP_OPTION
 #endif
 
-//https://github.com/espressif/esp-idf/blob/38628f98b9000ded87827dccbd8a5a1827392cfb/examples/protocols/http_server/captive_portal/main/main.c
+// From ESP-IDF's examples/protocols/http_server/captive_portal/main/main.c,
+// revision 38628f98b9000ded87827dccbd8a5a1827392cfb.
 
 #ifdef ENABLE_CAPTIVE_DHCP_OPTION
   /* Add DHCP option 114 to signal a captive portal */
@@ -29,7 +30,8 @@
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
 
     // set the DHCP option 114
-    ESP_ERROR_CHECK(esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, captiveportal_uri, strlen(captiveportal_uri)));
+    ESP_ERROR_CHECK(esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI,
+                                          captiveportal_uri, strlen(captiveportal_uri)));
 
     free(captiveportal_uri);
   }

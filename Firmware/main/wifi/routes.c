@@ -1,4 +1,9 @@
 #include "wifi/routes.h"
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #define TAG "ROUTE"
 
@@ -20,7 +25,8 @@ typedef struct rest_server_context {
   char scratch[SCRATCH_BUFSIZE];
 } rest_server_context_t;
 
-#define CHECK_FILE_EXTENSION(filename, ext) (strcasecmp(&filename[strlen(filename) - strlen(ext)], ext) == 0)
+#define CHECK_FILE_EXTENSION(filename, ext) \
+  (strcasecmp(&filename[strlen(filename) - strlen(ext)], ext) == 0)
 
 /* Set HTTP response content type according to file extension */
 static esp_err_t set_content_type_from_file(httpd_req_t *req, const char *filepath) {
@@ -163,7 +169,7 @@ static esp_err_t init_fs(void) {
  * 
  * Starts the HTTPD server.
  **/
-esp_err_t start_rest_server() {
+esp_err_t start_rest_server(void) {
   init_fs();
   
   rest_server_context_t *rest_context = NULL;
@@ -176,7 +182,7 @@ esp_err_t start_rest_server() {
   rest_context = (rest_server_context_t *)calloc(1, sizeof(rest_server_context_t));
 
   // main web server handler
-  static const httpd_uri_t app = {
+  const httpd_uri_t app = {
     .uri = "/*",
     .method = HTTP_GET,
     .handler = main_handler,
@@ -185,7 +191,7 @@ esp_err_t start_rest_server() {
   };
 
   // websocket handler
-  static const httpd_uri_t ws = {
+  const httpd_uri_t ws = {
     .uri = "/ws",
     .method = HTTP_GET,
     .handler = ws_handler,
