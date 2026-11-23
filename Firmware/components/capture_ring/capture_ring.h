@@ -51,6 +51,7 @@ typedef struct {
 } CaptureRing;
 
 CaptureRing *capture_ring_create(void);
+void capture_vhci_attach(CaptureRing *ring);
 void capture_ring_destroy(CaptureRing *ring);
 const char *capture_ring_begin(CaptureRing *ring, uint32_t token, uint32_t seconds,
                                bool web);
