@@ -7,7 +7,8 @@ import { MessageDetails } from "./MessageDetails";
 import { MessageRow } from "./MessageRow";
 import { exportMessage, messageKind, searchable } from "./messageFormat";
 
-const lastId = messages => messages.at(-1)?._uiId || 0;
+const lastId = messages => messages.reduce((latest, message) =>
+  Math.max(latest, message._uiId), 0);
 
 export const MessagesPanel = memo(function MessagesPanel({ messages, onClear, connected }) {
   const [snapshot, setSnapshot] = useState(null);
@@ -117,7 +118,8 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, onClear, co
       </Typography>}
     </Paper>
     <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-      Local receive times · Sampled live preview · Latest 1,000 events · Tap a row for details.
+      Browser receive times · Live GATT events · Latest 1,000 events.
+      PCAP also records lower-level packets.
       {paused && " Receiving and packet capture continue while paused."}
     </Typography>
     {copyStatus && <Alert severity="success" onClose={() => setCopyStatus("")} sx={{ mt: 1 }}>

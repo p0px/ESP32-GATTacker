@@ -126,7 +126,8 @@ static void transmit_task(void *context) {
     }
     size_t size = wire_encode(packet.kind, packet.id, packet.text, frame, sizeof(frame));
     if (size) uart_write_bytes(UART_NUM_1, frame, size);
-    if (capture || !ws_has_clients() || !strncmp(packet.text, "wifi_key\t", 9) ||
+    if (capture || !ws_has_clients() || !strncmp(packet.text, "traffic\t", 8) ||
+        !strncmp(packet.text, "wifi_key\t", 9) ||
         !strncmp(packet.text, "pair_request\t", 13) ||
         !strncmp(packet.text, "capture_export_", 15)) continue;
     cJSON *json = cJSON_CreateObject();

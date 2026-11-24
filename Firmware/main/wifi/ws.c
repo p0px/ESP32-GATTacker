@@ -38,7 +38,7 @@ ws_client_t *clients;
 static SemaphoreHandle_t ws_mutex = NULL;
 static atomic_uint pending_broadcasts = 0;
 static atomic_size_t pending_bytes = 0;
-static const unsigned MAX_PENDING_BROADCASTS = 2;
+static const unsigned MAX_PENDING_BROADCASTS = 4;
 static const size_t HOOK_RESERVED_BYTES = 2048;
 
 bool ws_has_clients(void) {

@@ -1,4 +1,5 @@
 #include "gatt_internal.h"
+#include "ble/traffic_store.h"
 
 
 
@@ -21,6 +22,12 @@ static const esp_attr_value_t *cached_attribute(uint16_t handle) {
 void reply_cached_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
   uint16_t target_handle = clone_target_handle(param->read.handle);
   const esp_attr_value_t *value = cached_attribute(target_handle);
+  char uuid[38] = {0};
+  get_uuid_for_handle(target_handle, uuid);
+  const char *kind = handle_is_descriptor(target_handle) ? "DESC" : "CHAR";
+  log_and_send_json("READ", "central -> cache", kind, clone.gattc_if,
+                    param->read.conn_id, param->read.trans_id, target_handle,
+                    ESP_GATT_OK, uuid, NULL);
   esp_gatt_rsp_t response = {0};
   response.attr_value.handle = param->read.handle;
   response.attr_value.offset = param->read.offset;
@@ -40,6 +47,12 @@ void reply_cached_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) 
   // Never invent 0x01 as a successful attribute value. Appearance, for example, needs 2 bytes.
   esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                              status, status == ESP_GATT_OK ? &response : NULL);
+  char *hex = status == ESP_GATT_OK
+      ? bytes_to_hex_string(response.attr_value.value, response.attr_value.len) : NULL;
+  log_and_send_json("READ RSP", "cache -> central", kind, clone.gattc_if,
+                    param->read.conn_id, param->read.trans_id, target_handle,
+                    status, uuid, hex);
+  free(hex);
 }
 
 
@@ -63,6 +76,11 @@ void finish_pending_write(esp_gatt_status_t status) {
   esp_err_t ret = esp_ble_gatts_send_response(clone.gatts_if, request.conn_id,
                                              request.trans_id, status, NULL);
   if (ret != ESP_OK) ESP_LOGW(TAG, "Write response failed: %s", esp_err_to_name(ret));
+  char uuid[38] = {0};
+  get_uuid_for_handle(request.handle, uuid);
+  log_and_send_json("WRITE RSP", connected ? "target -> central" : "cache -> central",
+                    request.descriptor ? "DESC" : "CHAR", clone.gattc_if, request.conn_id,
+                    request.trans_id, request.handle, status, uuid, NULL);
   ESP_LOGI(TAG, "Write complete h:%u status:%u elapsed_ms:%llu", request.handle, status,
            (unsigned long long)((esp_timer_get_time() - request.started_us) / 1000));
 }
@@ -71,9 +89,11 @@ void finish_pending_write(esp_gatt_status_t status) {
 /* Utils */
 
 void log_and_send_json(
-  const char *operation, const char *direction, const char *, uint32_t,
-  uint32_t, uint32_t, uint16_t handle, uint32_t, const char *uuid,
+  const char *operation, const char *direction, const char *kind, uint32_t,
+  uint32_t, uint32_t transaction, uint16_t handle, uint32_t status, const char *uuid,
   const char *extra_data) {
+  traffic_store_record(operation, direction, kind, transaction, handle, status,
+                       uuid, extra_data);
   uart_bridge_traffic(operation, direction, uuid, handle, extra_data);
 }
 

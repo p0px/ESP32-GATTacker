@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { isHookValue } from "./hookValue";
-import { parseSampledTraffic } from "./messageFormat";
+import { startTrafficFeed } from "./trafficFeed";
 import { useHookControl } from "./useHookControl";
 
 function replyToHook(data) {
@@ -93,6 +93,17 @@ export function useBoardSession() {
       scan.current.requestedAt = Date.now();
       window.socket.send(JSON.stringify({ opt: 2, action: "results" }));
     };
+    const enqueue = (message, receivedAt = Date.now()) => {
+      if (queue.current.length >= 1000) queue.current.shift();
+      queue.current.push({ ...message, msg: trafficText(message),
+        _uiId: ++sequence.current, _receivedAt: receivedAt });
+    };
+    const stopTraffic = startTrafficFeed(events => {
+      for (const event of events) enqueue(event);
+    }, restarted => enqueue({ msg: restarted
+      ? "Board restarted; live GATT traffic resumed."
+      : "Live GATT view missed events while catching up; PCAP is unaffected." }),
+    () => enqueue({ msg: "Live GATT feed unavailable; retrying. PCAP recording continues." }));
     const poll = () => {
       const open = window.socket?.readyState === 1;
       setConnected(open);
@@ -187,13 +198,7 @@ export function useBoardSession() {
         scan.current.requestedAt = 0;
         setResults(data.results);
       }
-      const sampled = parseSampledTraffic(data.gpio);
-      const message = sampled || (data.msg || data.operation ? data : null);
-      if (message) {
-        if (queue.current.length >= 1000) queue.current.shift();
-        queue.current.push({ ...message, msg: trafficText(message),
-          _uiId: ++sequence.current, _receivedAt: Date.now() });
-      }
+      if (data.msg || data.operation) enqueue(data);
     };
     window.socketCallback = callback;
     poll();
@@ -205,6 +210,7 @@ export function useBoardSession() {
       setMessages(previous => [...previous, ...batch].slice(-1000));
     }, 100);
     return () => {
+      stopTraffic();
       clearInterval(polling);
       clearInterval(telemetry);
       if (window.socketCallback === callback) window.socketCallback = null;

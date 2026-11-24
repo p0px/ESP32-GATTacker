@@ -43,20 +43,18 @@ void start_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
                         read->trans_id, target_handle, read->offset,
                         handle_is_descriptor(target_handle), false, 0};
   request.central_handle = read->handle;
+  log_att(request, "READ", ESP_GATT_OK, NULL, 0, false);
   if (!target_handle) {
+    log_att(request, "READ RSP", ESP_GATT_INVALID_HANDLE, NULL, 0, true);
     att_reply(request, ESP_GATT_INVALID_HANDLE, NULL);
     return;
   }
   if (att_busy()) {
+    log_att(request, "READ RSP", ESP_GATT_BUSY, NULL, 0, true);
     att_reply(request, ESP_GATT_BUSY, NULL);
     return;
   }
   clone.transactions.request = request;
-  char uuid[38] = {0};
-  get_uuid_for_handle(target_handle, uuid);
-  log_and_send_json("READ", "central -> target", request.descriptor ? "DESC" : "CHAR",
-                    clone.gattc_if, request.target, request.transaction, target_handle,
-                    ESP_GATT_OK, uuid, NULL);
   esp_err_t result = request.descriptor
       ? esp_ble_gattc_read_char_descr(clone.gattc_if, request.target, target_handle,
                                       ESP_GATT_AUTH_REQ_NONE)
@@ -64,7 +62,9 @@ void start_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
                                 ESP_GATT_AUTH_REQ_NONE);
   if (result != ESP_OK) {
     clone.transactions.request = (AttRequest){0};
-    att_reply(request, submission_status(result), NULL);
+    esp_gatt_status_t status = submission_status(result);
+    log_att(request, "READ RSP", status, NULL, 0, true);
+    att_reply(request, status, NULL);
   }
 }
 
@@ -82,12 +82,16 @@ void finish_read(bool descriptor, esp_ble_gattc_cb_param_t *param) {
     return;
   }
   if (read->value_len > ESP_GATT_MAX_ATTR_LEN || (read->value_len && !read->value)) {
+    log_att(request, descriptor ? "READ DESC RSP" : "READ CHAR RSP",
+            ESP_GATT_INVALID_ATTR_LEN, NULL, 0, true);
     att_reply(request, ESP_GATT_INVALID_ATTR_LEN, NULL);
     return;
   }
   uint16_t length = read->value_len;
   uint8_t *value = malloc(length ? length : 1);
   if (!value) {
+    log_att(request, descriptor ? "READ DESC RSP" : "READ CHAR RSP",
+            ESP_GATT_NO_RESOURCES, NULL, 0, true);
     att_reply(request, ESP_GATT_NO_RESOURCES, NULL);
     return;
   }
@@ -96,9 +100,6 @@ void finish_read(bool descriptor, esp_ble_gattc_cb_param_t *param) {
   get_uuid_for_handle(read->handle, uuid);
   char *hex = bytes_to_hex_string(value, length);
   apply_hook("read", uuid, &hex, &value, &length);
-  log_and_send_json(descriptor ? "READ DESC RSP" : "READ CHAR RSP", "target -> central", "",
-                    clone.gattc_if, request.target, request.transaction, read->handle,
-                    read->status, uuid, hex);
   free(hex);
   esp_gatt_rsp_t response = {0};
   esp_gatt_status_t status = ESP_GATT_OK;
@@ -114,5 +115,11 @@ void finish_read(bool descriptor, esp_ble_gattc_cb_param_t *param) {
       memcpy(response.attr_value.value, value + request.offset, response.attr_value.len);
   }
   free(value);
+  char *response_hex = status == ESP_GATT_OK
+      ? bytes_to_hex_string(response.attr_value.value, response.attr_value.len) : NULL;
+  log_and_send_json(descriptor ? "READ DESC RSP" : "READ CHAR RSP", "target -> central", "",
+                    clone.gattc_if, request.target, request.transaction, read->handle,
+                    status, uuid, response_hex);
+  free(response_hex);
   att_reply(request, status, status == ESP_GATT_OK ? &response : NULL);
 }

@@ -64,12 +64,12 @@ int main(void) {
   const ws_client_t client = {(void *)1, 3};
   add_client(&client);
   assert(ws_has_clients());
-  for (int i = 0; i < 2; i++) assert(try_msg_clients("message", false));
+  for (int i = 0; i < 4; i++) assert(try_msg_clients("message", false));
   assert(!try_msg_clients("message", false));
   assert(try_msg_clients("request", true));
   assert(!try_msg_clients("request", true));
   drain();
-  assert(delivered == 3);
+  assert(delivered == 5);
 
   fail_queue = true;
   assert(!try_msg_clients("failed", false));
@@ -100,7 +100,7 @@ int main(void) {
   assert(!try_msg_clients(large, false));
   client_open = false;
   drain();
-  assert(delivered == 6);
+  assert(delivered == 8);
   large[16384] = 'x';
   large[16385] = 0;
   assert(!try_msg_clients(large, false) && !try_msg_clients(NULL, false));
