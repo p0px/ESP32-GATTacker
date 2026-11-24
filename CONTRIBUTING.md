@@ -2,7 +2,7 @@
 
 GitHub is the primary repository for ESP32 GATTacker. Please report bugs,
 request features, and open pull requests at
-[p0px/ESP32-Gattacker](https://github.com/p0px/ESP32-Gattacker).
+[p0px/ESP32-GATTacker](https://github.com/p0px/ESP32-GATTacker).
 
 For bug reports, include the ESP-IDF version, board and wiring, steps to
 reproduce, and relevant serial logs. Remove access keys and Wi-Fi credentials

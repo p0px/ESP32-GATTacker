@@ -202,7 +202,7 @@ export const Layout = () => {
             <MenuIcon />
           </IconButton>
           <Typography variant='h6' noWrap component='div'>
-            ESP32-Gattacker
+            ESP32-GATTacker
           </Typography>
         </Toolbar>
       </AppBar>

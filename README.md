@@ -1,6 +1,6 @@
-# ESP32-Gattacker
+# ESP32-GATTacker
 
-An ESP32 powered implementation of [Gattacker](https://github.com/securing/gattacker) for performing Bluetooth Low Energy MITM (Man-in-the-Middle) attacks.
+An ESP32 powered implementation of [GATTacker](https://github.com/securing/gattacker) for performing Bluetooth Low Energy MITM (Man-in-the-Middle) attacks.
 
 The ESP32-S3 runs on its own. The optional
 [Flipper Zero companion app](https://github.com/p0px/ESP32-GATTacker-Flipper)
@@ -20,10 +20,8 @@ The Flipper repository currently requires access.
 
 Use an ESP32-S3 with at least 4 MB of flash. PSRAM is recommended for packet captures.
 
-1. Download a merged `esp-gattacker-*.bin` image from a successful
-   [GitHub Actions build](https://github.com/p0px/ESP32-GATTacker/actions).
-   Earlier published binaries remain on [GitLab Releases](https://gitlab.com/p0px/esp32-gattacker/-/releases/permalink/latest)
-   until the next GitHub release.
+1. Download the merged `esp-gattacker-*.bin` image from
+   [GitHub Releases](https://github.com/p0px/ESP32-GATTacker/releases).
 2. Flash the image with esptool:
 
 ```bash
