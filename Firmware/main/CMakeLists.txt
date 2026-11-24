@@ -1,7 +1,8 @@
-idf_component_register(SRC_DIRS "." "ble" "wifi" "uart" "capture"
+idf_component_register(SRC_DIRS "." "ble" "wifi" "uart" "capture" "agent"
                        INCLUDE_DIRS "." "../include" "../components/capture_ring"
                                     "../components/network_config"
-                                    "../components/uart_wire" "../components/pcapng")
+                                    "../components/uart_wire" "../components/pcapng"
+                                    "../components/mcp_protocol")
 
 # for bypassing not being able to send deauth packets
 target_link_libraries(${COMPONENT_LIB}

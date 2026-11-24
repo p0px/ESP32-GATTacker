@@ -66,6 +66,12 @@ void uart_command_phone(bool active) {
   uart_command_state();
 }
 
+void uart_bridge_target_mac(char *out, size_t size) {
+  if (size) snprintf(out, size, "%s", target);
+}
+
+bool uart_bridge_phone_connected(void) { return atomic_load(&phone_connected); }
+
 void uart_command_state(void) {
   char event[240];
   const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;

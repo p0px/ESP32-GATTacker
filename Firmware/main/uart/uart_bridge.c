@@ -9,6 +9,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "network_pair.h"
+#include "agent_api.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -52,7 +53,6 @@ void uart_bridge_event(const char *event) { uart_emit(WireEvent, 0, event); }
 
 void uart_bridge_traffic(const char *operation, const char *direction,
                          const char *uuid, uint16_t handle, const char *hex) {
-  if (!uart_bridge_connected()) return;
   int64_t now = esp_timer_get_time();
   int64_t expected = atomic_load(&next_traffic_us);
   if (now < expected || !atomic_compare_exchange_strong(&next_traffic_us, &expected,
@@ -67,7 +67,8 @@ void uart_bridge_traffic(const char *operation, const char *direction,
   const char *data = hex ? hex : "";
   snprintf(event, WIRE_MAX, "traffic\t%c\t%s\t%s\t%u\t%.1034s\t%s", op,
            direction, uuid, handle, data, strlen(data) > 1034 ? "truncated" : operation);
-  uart_bridge_event(event);
+  agent_preview(event);
+  if (uart_bridge_connected()) uart_bridge_event(event);
   heap_caps_free(event);
 }
 

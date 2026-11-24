@@ -7,6 +7,7 @@ extern "C" {
 void agent_init(void);
 cJSON *agent_call(const char *name, const cJSON *arguments);
 cJSON *agent_catalog(void);
+void agent_preview(const char *text);
 #ifdef __cplusplus
 }
 #endif

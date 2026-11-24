@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 /* Flipper UART transport shares the web UI's session controller. */
 void uart_bridge_start(void);
@@ -14,3 +15,5 @@ void uart_bridge_traffic(const char *operation, const char *direction,
 char *uart_bridge_hook(const char *type, const char *uuid, const char *hex);
 bool uart_bridge_rules_active(void);
 bool uart_bridge_connected(void);
+void uart_bridge_target_mac(char *out, size_t size);
+bool uart_bridge_phone_connected(void);
