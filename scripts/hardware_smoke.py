@@ -23,13 +23,27 @@ async def scan(host: str) -> list[dict]:
   async with connect(f"ws://{host}/ws", open_timeout=8) as socket:
     await socket.send(json.dumps({"opt": 2, "action": "scan"}))
     deadline = time.monotonic() + 25
+    next_status = 0.0
+    requested_results = False
+    saw_scanning = False
     while time.monotonic() < deadline:
-      event = json.loads(await asyncio.wait_for(socket.recv(), timeout=18))
-      if event.get("scan_done"):
+      now = time.monotonic()
+      if now >= next_status:
+        await socket.send(json.dumps({"opt": 90, "command": "status"}))
+        next_status = now + 2
+      try:
+        event = json.loads(await asyncio.wait_for(socket.recv(), timeout=1))
+      except TimeoutError:
+        continue
+      if event.get("state") == 1:
+        saw_scanning = True
+      if event.get("scan_done") or (saw_scanning and event.get("state") == 2):
         await socket.send(json.dumps({"opt": 2, "action": "results"}))
+        requested_results = True
       if "results" in event:
         return event["results"]
-  raise RuntimeError("BLE scan did not complete")
+    raise RuntimeError("BLE scan did not complete" if not requested_results else
+                       "BLE results did not arrive")
 
 
 async def main() -> None:
