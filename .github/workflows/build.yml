@@ -27,14 +27,7 @@ jobs:
           npm ci
           npm run build
           cd ..
-          python3 scripts/package_ui.py
-      - name: Check bundled UI is current
-        run: |
-          if [ -n "$(git status --porcelain -- Firmware/data)" ]; then
-            git status --short -- Firmware/data
-            echo "Run npm run build in UI, then python3 scripts/package_ui.py and commit Firmware/data."
-            exit 1
-          fi
+          python3 scripts/check_packaged_ui.py
 
   firmware:
     name: ESP32-S3 firmware
