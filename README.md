@@ -54,6 +54,7 @@ changes from the web UI.
 After joining a network, use the station IP shown in Settings. The setup AP
 continues to use `1.3.3.7` when enabled. Select a device before starting a
 session or PCAPNG capture, and download RAM captures before powering off.
+The MCP tool list is in [Doc/mcp-tools.json](Doc/mcp-tools.json).
 
 ### Serial
 

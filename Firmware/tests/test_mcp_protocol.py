@@ -24,7 +24,7 @@ class McpProtocolTest(unittest.TestCase):
     """Compile the real dispatcher and exercise its tool schemas and error paths."""
     with tempfile.TemporaryDirectory() as temporary:
       folder = Path(temporary)
-      catalog = json.loads((ROOT / "docs/mcp-tools.json").read_text())
+      catalog = json.loads((ROOT.parent / "Doc/mcp-tools.json").read_text())
       literal = json.dumps(json.dumps(catalog))
       generated = folder / "catalog.c"
       generated.write_text(

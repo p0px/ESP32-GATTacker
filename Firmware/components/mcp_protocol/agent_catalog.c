@@ -1,4 +1,4 @@
-// Generated from docs/mcp-tools.json.
+// Generated from Doc/mcp-tools.json.
 #include "agent_api.h"
 cJSON *agent_catalog(void) {
   return cJSON_Parse(
