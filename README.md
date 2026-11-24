@@ -13,19 +13,23 @@ The Flipper repository currently requires access.
 
 ## Install
 
-Assuming you have an ESP32-S3 with at least 4mb of flash:
+Use an ESP32-S3 with at least 4 MB of flash. PSRAM is recommended for packet captures.
 
-1. Download the latest release binary `esp-gattacker-vX.X.X.bin` from the [GitLab Releases Page](https://gitlab.com/p0px/esp32-gattacker/-/releases/permalink/latest).
-2. Flash the binary using `esptool.py`:
+1. Download a merged `esp-gattacker-*.bin` image from a successful
+   [GitHub Actions build](https://github.com/p0px/ESP32-GATTacker/actions).
+   Earlier published binaries remain on [GitLab Releases](https://gitlab.com/p0px/esp32-gattacker/-/releases/permalink/latest)
+   until the next GitHub release.
+2. Flash the image with esptool:
 
 ```bash
-esptool.py -p (PORT) -b 460800 write_flash 0x0 esp-gattacker-vX.X.X.bin
+python -m esptool --chip esp32s3 -p PORT -b 460800 write_flash 0x0 IMAGE.bin
 ```
 
 > [!WARNING]
 > Supports ESP32-S3. This command **will overwrite** your NVS partition, meaning any saved WiFi credentials or settings will be lost.
 
-Be sure to replace `(PORT)` with your actual serial port (e.g., `/dev/ttyUSB0` or `COM3`) and `esp-gattacker-vX.X.X.bin` with the actual filename.
+Replace `PORT` with your serial port (for example, `COM7` or `/dev/ttyUSB0`)
+and `IMAGE.bin` with the downloaded filename.
 
 ## Instructions
 ### Connect to WiFi
@@ -37,32 +41,51 @@ ssid: ESP_WIFI
 pass: gattattack
 ```
 
-If this does not work the WiFi info is printed out in the Serial connection upon boot.
+If these have changed, the current AP name is printed in the serial log at boot.
 
 Once you are connected you can go [http://1.3.3.7](http://1.3.3.7) to access the Web UI.
 
 ### Web UI Setup
 
-Go to the settings Icon on the left hand side of the webpage and edit your WiFi credentials to your liking. Make sure to click the reboot button after.
+Open Settings to change the setup AP credentials or scan for a network to join.
+The board works without a Flipper; when one is attached, it can approve network
+changes from the web UI.
 
-Connect to the new network you just set up and open the ESP32's station IP in your browser.
+After joining a network, use the station IP shown in Settings. The setup AP
+continues to use `1.3.3.7` when enabled. Select a device before starting a
+session or PCAPNG capture, and download RAM captures before powering off.
 
 ### Serial
 
-Logging and information can be viewed over serial baud `115200`
+Logs are available over USB serial at `115200` baud.
 
-## Compile
-  * Install VSCode
-  * Install ESP-IDF Extension
-  * Setup IDF and use version 5.5.2
-  * `cd ~/.espressif/v5.5.2/esp-idf/`
-  * `git apply bad_blues.patch` - Apply bad blues patch to esp to get gatt attack to work properly
-  * Open repo folder in VSCode
-  * Edit `Firmware/partitions.csv` if you want to change from default 4mb
-  * In VSCode `Terminal -> Run Build Task`
-  * Now you should be able to use 'flash' lightening symbol on bottom bar
-  * After flash you can monitor using the button on bottom bar
-  * Any of the other ESP VSCode Plugin buttons will now work including the build,flash,monitor command
+## Build
+
+From the repository root, build and package the web UI with Node.js 24 and Python:
+
+```powershell
+cd UI
+npm ci
+npm run build
+cd ..
+python scripts/package_ui.py
+```
+
+Build the firmware with Docker and ESP-IDF 5.5.2 (PowerShell):
+
+```powershell
+docker run --rm `
+  -v "${PWD}:/project" `
+  -w /project/Firmware `
+  espressif/idf:v5.5.2 `
+  sh -lc 'git -C "$IDF_PATH" apply /project/bad_blues.patch && idf.py build'
+```
+
+The merged image appears in `Firmware/build/esp-gattacker-*.bin`.
+You can also build locally with ESP-IDF 5.5.2 after applying `bad_blues.patch`
+to its ESP-IDF checkout; use `idf.py flash` from `Firmware` to preserve NVS.
+For different UART pins or PSRAM, run `python scripts/configure_board.py --help`
+before building.
 
 GitHub is the primary development repository. [GitHub Actions](https://github.com/p0px/ESP32-GATTacker/actions)
 builds pull requests and pushes to `main`, with a merged firmware image in each successful run.
