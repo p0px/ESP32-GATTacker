@@ -9,7 +9,7 @@
 #include <string.h>
 
 static void reply(uint16_t id, const char *text) {
-  uart_emit(WireReply, id, text);
+  (void)uart_emit_wait(WireReply, id, text, 250);
 }
 
 static void summary(const CaptureStats *stats, char *out, size_t size, const char *name) {
@@ -94,9 +94,9 @@ static const char *ram_start(char *seconds_text, char response[64]) {
     return "error\tinvalid capture timestamp";
   CaptureStoreStatus previous = capture_store_status();
   if (previous.state == CaptureReady && previous.auto_export) {
-    FlipperSdStatus sd = flipper_sd_status();
     CaptureExportStatus export = capture_export_status();
-    if (sd.complete && sd.id == previous.id && export.id == previous.id &&
+    // The completed export ack survives a Flipper app restart; SD status does not.
+    if (export.id == previous.id && export.bytes == previous.bytes &&
         !strcmp(export.state, "complete")) capture_store_clear(previous.id);
   }
   const char *error = capture_store_start(seconds, true, true);
