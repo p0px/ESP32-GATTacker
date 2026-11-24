@@ -101,7 +101,19 @@ void clone_service_deleted(esp_ble_gatts_cb_param_t *param) {
 
 void clone_verify_complete() {
   if (shutdown_gatt_attack || clone.refresh_pending) return;
-  if (!clone.database_changed && clone.verified_services == clone.num_services) return;
+  if (!clone.database_changed && clone.verified_services == clone.num_services) {
+    if (!clone.handoff_pending) return;
+    esp_err_t result = esp_ble_gap_start_advertising(&adv_params);
+    if (result != ESP_OK) {
+      clone_failed("resume advertising after handoff", result);
+      return;
+    }
+    clone.handoff_pending = false;
+    clone.server_ready = true;
+    gattAttackState = GATT_ATTACK_STATE_RUNNING;
+    gatt_send_state(gattAttackState);
+    return;
+  }
   clone.refresh_pending = true;
   clone.server_ready = false;
   esp_ble_gap_stop_advertising();

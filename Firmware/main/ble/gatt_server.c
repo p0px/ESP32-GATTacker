@@ -1,5 +1,43 @@
 #include "gatt_internal.h"
 
+static void record_bulk_write(uint16_t handle, uint16_t length, bool response) {
+  if (!connected) return;
+  if (response) {
+    if (handle != clone.stream_handle && clone.stream_bytes >= 128 * 1024)
+      clone.stream_commit_us = esp_timer_get_time();
+    clone.stream_bytes = 0;
+    return;
+  }
+  if (length < 20) return;
+  if (handle != clone.stream_handle) {
+    clone.stream_handle = handle;
+    clone.stream_bytes = 0;
+    clone.stream_commit_us = 0;
+  }
+  if (clone.stream_bytes <= UINT32_MAX - length) clone.stream_bytes += length;
+  if (clone.stream_bytes >= 128 * 1024) clone.stream_commit_us = 0;
+}
+
+static void release_target_after_bulk_write(void) {
+  int64_t elapsed = esp_timer_get_time() - clone.stream_commit_us;
+  if (!clone.stream_commit_us || elapsed < 0 || elapsed > 10 * 1000000 ||
+      !connected || clone.refresh_pending) return;
+  clone.stream_commit_us = 0;
+  clone.stream_bytes = 0;
+  clone.handoff_pending = true;
+  clone.server_ready = false;
+  esp_ble_gap_stop_advertising();
+  esp_err_t result = esp_ble_gap_disconnect(clone.target_bda);
+  if (result == ESP_OK) {
+    gatt_send_output("Bulk write complete; releasing target for restart", false);
+    return;
+  }
+  clone.handoff_pending = false;
+  clone.server_ready = true;
+  esp_ble_gap_start_advertising(&adv_params);
+  gatt_send_output("Target release failed; keeping existing session", false);
+}
+
 /**
  * server_event
  *
@@ -170,6 +208,8 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
         free(write_value);
         break;
       }
+      if (!isDescriptor)
+        record_bulk_write(param->write.handle, write_len, param->write.need_rsp);
 
       free(out);
       free(hex_value);
@@ -277,7 +317,8 @@ after_find_write:
       break;
     }
     case ESP_GATTS_DISCONNECT_EVT: {
-      if (memcmp(clone.target_bda, param->disconnect.remote_bda, 6))
+      bool central = memcmp(clone.target_bda, param->disconnect.remote_bda, 6) != 0;
+      if (central)
         uart_bridge_phone(false);
       /**
        * Called when a victim is disconnected
@@ -292,11 +333,12 @@ after_find_write:
       if (!memcmp(clone.target_bda, param->disconnect.remote_bda, 6))
         write_queue_target_disconnected();
       central_transactions_disconnected(param->disconnect.conn_id);
-      if (memcmp(clone.target_bda, param->disconnect.remote_bda, 6))
+      if (central)
         write_queue_central_disconnected(param->disconnect.conn_id);
       if (pending_write.active && pending_write.conn_id == param->disconnect.conn_id) {
         pending_write.active = false;
       }
+      if (central) release_target_after_bulk_write();
       if (!shutdown_gatt_attack && !clone.refresh_pending && clone.server_ready)
         esp_ble_gap_start_advertising(&adv_params);
       break;

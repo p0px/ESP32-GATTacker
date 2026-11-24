@@ -137,6 +137,7 @@ void clone_started(esp_ble_gatts_cb_param_t *param) {
       }
       clone.server_ready = true;
       clone.refresh_pending = false;
+      clone.handoff_pending = false;
       gatt_send_output("GATT Clone Success", false);
       gattAttackState = GATT_ATTACK_STATE_RUNNING;
       gatt_send_state(gattAttackState);

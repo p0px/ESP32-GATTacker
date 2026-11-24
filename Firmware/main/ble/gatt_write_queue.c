@@ -118,19 +118,11 @@ void write_queue_target_disconnected(void) {
 }
 
 void write_queue_central_disconnected(uint16_t central) {
-  GattWriteQueue *queue = &clone.writes;
-  if (!queue->in_flight || !queue->head || queue->head->central != central) {
-    write_queue_reset();
-    return;
-  }
-  GattQueuedWrite *active = queue->head;
-  queue->head = active->next;
-  while (queue->head) write_queue_pop();
-  active->next = NULL;
-  queue->head = queue->tail = active;
-  queue->bytes = sizeof(GattQueuedWrite) + active->length;
-  queue->count = 1;
-  queue->pacing_requested = false;
+  (void)central;
+  // Accepted writes remain ordered even if the phone reconnects mid-transfer.
+  // Dropping the tail here omits firmware chunks that were already acknowledged.
+  clone.writes.pacing_requested = false;
+  write_queue_pump();
 }
 
 void write_queue_complete(bool descriptor, esp_ble_gattc_cb_param_t *param) {

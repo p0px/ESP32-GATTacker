@@ -60,6 +60,7 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
       if (memcmp(clone.target_bda, param->connect.remote_bda, sizeof(clone.target_bda)) == 0) {
         connected = true;
         connecting = false;
+        retries = 0;
         gatt_send_output("Target Device Client Connected.", false);
         gattAttackState = clone.server_ready ? GATT_ATTACK_STATE_RUNNING
                                      : GATT_ATTACK_STATE_CLIENT_CONNECTED;
@@ -103,6 +104,15 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
       if (memcmp(clone.target_bda, param->disconnect.remote_bda, 6) == 0) {
         gatt_send_output("Lost Client Connection", false);
         connected = false;
+        connecting = false;
+        if (clone.server_ready) {
+          clone.handoff_pending = true;
+          clone.server_ready = false;
+          esp_ble_gap_stop_advertising();
+          if (uart_bridge_phone_connected()) esp_ble_gap_disconnect(clone.central_bda);
+        }
+        clone.stream_bytes = 0;
+        clone.stream_commit_us = 0;
         write_queue_target_disconnected();
         target_transactions_disconnected();
         write_queue_reset();
@@ -143,7 +153,13 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
        */
       if (param->open.status != ESP_GATT_OK) {
         ESP_LOGE(TAG, "Open Target connection failed: %d", param->open.status);
-        connection_failed("open");
+        if (clone_init) {
+          connecting = false;
+          gatt_send_output("Target open failed; scanning again", false);
+          esp_ble_gap_set_scan_params(&ble_scan_params);
+        } else {
+          connection_failed("open");
+        }
         break;
       }
 

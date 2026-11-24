@@ -108,6 +108,8 @@ void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
             gatt_send_output("Target connection failed", false);
             gattAttackState = GATT_ATTACK_STATE_CLIENT_CONNECT_FAIL;
             gatt_send_state((int)gattAttackState);
+          } else if (!connected && !connecting) {
+            esp_ble_gap_start_scanning(30);
           }
           break;
         }
