@@ -10,17 +10,23 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   web:
     name: Web UI
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: UI/package-lock.json
+          package-manager-cache: false
       - name: Build packaged UI
         run: |
           cd UI
@@ -33,13 +39,17 @@ jobs:
     name: ESP32-S3 firmware
     needs: web
     runs-on: ubuntu-latest
-    container: espressif/idf:v5.5.2
+    timeout-minutes: 30
+    container:
+      # ESP-IDF v5.5.2
+      image: espressif/idf@sha256:05cbfc42ed2e987b8026722c15bf1d8523d3e4fd1b4ac04d2e4056f5e0918b99
     env:
       IDF_TARGET: esp32s3
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Patch ESP-IDF Bluedroid
         run: git -C "$IDF_PATH" apply "$GITHUB_WORKSPACE/bad_blues.patch"
       - name: Build firmware and merged image
@@ -48,7 +58,7 @@ jobs:
           . "$IDF_PATH/export.sh" >/dev/null
           idf.py build
       - name: Upload firmware
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: firmware-${{ github.sha }}
           path: |
@@ -59,13 +69,20 @@ jobs:
 
   release:
     name: GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: firmware
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
-      contents: write
+      contents: write # Required only to create the GitHub release.
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: firmware-${{ github.sha }}
           path: release
@@ -75,8 +92,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release/esp-gattacker-*.bin --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" release/esp-gattacker-*.bin \
-              --generate-notes
+            echo "Release already exists; refusing to overwrite it."
+            exit 1
           fi
+          gh release create "$GITHUB_REF_NAME" release/esp-gattacker-*.bin \
+            --generate-notes --verify-tag
