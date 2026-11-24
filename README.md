@@ -2,14 +2,19 @@
 
 An ESP32 powered implementation of [Gattacker](https://github.com/securing/gattacker) for performing Bluetooth Low Energy MITM (Man-in-the-Middle) attacks.
 
-The ESP32-S3 runs standalone with a web UI for scanning, sessions, hooks, and PCAPNG
-capture. It can host its setup AP or join a Wi-Fi network, and offers an
-access-key-protected MCP endpoint. The optional
+The ESP32-S3 runs on its own. The optional
 [Flipper Zero companion app](https://github.com/p0px/ESP32-GATTacker-Flipper)
-controls the same session over GPIO UART and can save captures to SD.
+controls it over GPIO UART and can save captures to SD.
 The Flipper repository currently requires access.
 
 ![UI](./Doc/img/ui_running.png)
+
+## Features
+
+- Scan BLE devices, run GATT proxy sessions, and inspect live requests and responses.
+- Edit traffic hooks in the web UI. The web UI and Flipper share session state.
+- Record HCI traffic as PCAPNG in PSRAM, then download it or copy it to Flipper SD.
+- Host a setup AP or join Wi-Fi; use the access-key-protected MCP endpoint for automation.
 
 ## Install
 
