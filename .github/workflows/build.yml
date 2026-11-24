@@ -55,8 +55,13 @@ jobs:
       - name: Build firmware and merged image
         working-directory: Firmware
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" describe --tags --always --dirty
           . "$IDF_PATH/export.sh" >/dev/null
           idf.py build
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            test -f "build/esp-gattacker-$GITHUB_REF_NAME.bin"
+          fi
       - name: Upload firmware
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
