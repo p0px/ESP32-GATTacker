@@ -38,23 +38,29 @@ void start_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     reply_cached_read(gatts_if, param);
     return;
   }
+  uint16_t target_handle = clone_target_handle(read->handle);
   AttRequest request = {AttRead, read->conn_id, clone.target_client_conn_id,
-                        read->trans_id, read->handle, read->offset,
-                        handle_is_descriptor(read->handle), false};
+                        read->trans_id, target_handle, read->offset,
+                        handle_is_descriptor(target_handle), false, 0};
+  request.central_handle = read->handle;
+  if (!target_handle) {
+    att_reply(request, ESP_GATT_INVALID_HANDLE, NULL);
+    return;
+  }
   if (att_busy()) {
     att_reply(request, ESP_GATT_BUSY, NULL);
     return;
   }
   clone.transactions.request = request;
   char uuid[38] = {0};
-  get_uuid_for_handle(read->handle, uuid);
+  get_uuid_for_handle(target_handle, uuid);
   log_and_send_json("READ", "central -> target", request.descriptor ? "DESC" : "CHAR",
-                    clone.gattc_if, request.target, request.transaction, read->handle,
+                    clone.gattc_if, request.target, request.transaction, target_handle,
                     ESP_GATT_OK, uuid, NULL);
   esp_err_t result = request.descriptor
-      ? esp_ble_gattc_read_char_descr(clone.gattc_if, request.target, read->handle,
+      ? esp_ble_gattc_read_char_descr(clone.gattc_if, request.target, target_handle,
                                       ESP_GATT_AUTH_REQ_NONE)
-      : esp_ble_gattc_read_char(clone.gattc_if, request.target, read->handle,
+      : esp_ble_gattc_read_char(clone.gattc_if, request.target, target_handle,
                                 ESP_GATT_AUTH_REQ_NONE);
   if (result != ESP_OK) {
     clone.transactions.request = (AttRequest){0};
@@ -99,7 +105,7 @@ void finish_read(bool descriptor, esp_ble_gattc_cb_param_t *param) {
   if (request.offset > length) {
     status = ESP_GATT_INVALID_OFFSET;
   } else {
-    response.attr_value.handle = request.handle;
+    response.attr_value.handle = request.central_handle;
     response.attr_value.offset = request.offset;
     uint16_t remaining = length - request.offset;
     uint16_t limit = clone.transactions.central_mtu - 1;

@@ -15,6 +15,18 @@ void clone_failed(const char *operation, int status) {
   gatt_send_state(gattAttackState);
 }
 
+bool clone_standard_service(uint16_t handle) {
+  // Bluedroid supplies GAP/GATT attributes itself and rejects duplicate additions.
+  for (size_t i = 0; i < clone.num_services; i++) {
+    const service_t *service = &clone.services[i];
+    if (service->service_handle != handle || service->service_uuid.len != ESP_UUID_LEN_16)
+      continue;
+    uint16_t uuid = service->service_uuid.uuid.uuid16;
+    return uuid == 0x1800 || uuid == 0x1801;
+  }
+  return false;
+}
+
 static uint16_t clone_service_handles(size_t index) {
   const service_t *service = &clone.services[index];
   uint32_t last = service->start_handle;
@@ -118,7 +130,9 @@ void clone_created(esp_ble_gatts_cb_param_t *param) {
 }
 
 void clone_started(esp_ble_gatts_cb_param_t *param) {
-  if (param->start.status != ESP_GATT_OK) {
+  if (param->start.status != ESP_GATT_OK &&
+      !(param->start.status == ESP_GATT_ERROR &&
+        clone_standard_service(param->start.service_handle))) {
     clone_failed("start service", param->start.status);
     return;
   }

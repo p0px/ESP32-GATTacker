@@ -105,12 +105,8 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
         gatt_send_output("Lost Client Connection", false);
         connected = false;
         connecting = false;
-        if (clone.server_ready) {
-          clone.handoff_pending = true;
-          clone.server_ready = false;
-          esp_ble_gap_stop_advertising();
-          if (uart_bridge_phone_connected()) esp_ble_gap_disconnect(clone.central_bda);
-        }
+        // The Tile can release an idle target link; keep the clone visible while
+        // reconnecting so the phone can still attach and use cached attributes.
         clone.stream_bytes = 0;
         clone.stream_commit_us = 0;
         write_queue_target_disconnected();
@@ -443,9 +439,10 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
 
       free(hex_value);
 
-      if (central_connected) esp_ble_gatts_send_indicate(clone.gatts_if,
+      uint16_t local_handle = clone_local_handle(param->notify.handle);
+      if (central_connected && local_handle) esp_ble_gatts_send_indicate(clone.gatts_if,
                                   clone.victim_client_conn_id,
-                                  param->notify.handle,
+                                  local_handle,
                                   notify_len,
                                   notify_value,
                                   !param->notify.is_notify);

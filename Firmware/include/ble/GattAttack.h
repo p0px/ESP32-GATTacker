@@ -30,6 +30,7 @@ extern "C" {
 typedef struct desc_t {
   esp_bt_uuid_t desc_uuid;
   uint16_t desc_handle;
+  uint16_t local_handle;
   esp_attr_value_t value;
   esp_gatt_perm_t perm;
 } desc_t;
@@ -37,6 +38,7 @@ typedef struct desc_t {
 typedef struct char_t {
   esp_bt_uuid_t char_uuid;
   uint16_t char_handle;
+  uint16_t local_handle;
   esp_gatt_char_prop_t property;
   desc_t *descs;
   uint8_t num_descs;

@@ -19,7 +19,8 @@ static const esp_attr_value_t *cached_attribute(uint16_t handle) {
 }
 
 void reply_cached_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
-  const esp_attr_value_t *value = cached_attribute(param->read.handle);
+  uint16_t target_handle = clone_target_handle(param->read.handle);
+  const esp_attr_value_t *value = cached_attribute(target_handle);
   esp_gatt_rsp_t response = {0};
   response.attr_value.handle = param->read.handle;
   response.attr_value.offset = param->read.offset;

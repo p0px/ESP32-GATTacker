@@ -5,9 +5,15 @@
 void start_prepare(esp_ble_gatts_cb_param_t *param) {
   const typeof(param->write) *write = &param->write;
   GattTransactions *state = &clone.transactions;
+  uint16_t target_handle = clone_target_handle(write->handle);
   AttRequest request = {AttPrepare, write->conn_id, clone.target_client_conn_id,
-                        write->trans_id, write->handle, write->offset,
-                        handle_is_descriptor(write->handle), false};
+                        write->trans_id, target_handle, write->offset,
+                        handle_is_descriptor(target_handle), false, 0};
+  request.central_handle = write->handle;
+  if (!target_handle) {
+    att_reply(request, ESP_GATT_INVALID_HANDLE, NULL);
+    return;
+  }
   if (!connected || att_busy() || (state->queued && state->prepared_owner != write->conn_id)) {
     att_reply(request, ESP_GATT_BUSY, NULL);
     return;
@@ -25,9 +31,9 @@ void start_prepare(esp_ble_gatts_cb_param_t *param) {
   state->request = request;
   log_att(request, "PREP WRITE", ESP_GATT_OK, write->value, write->len, false);
   esp_err_t result = request.descriptor
-      ? esp_ble_gattc_prepare_write_char_descr(clone.gattc_if, request.target, write->handle,
+      ? esp_ble_gattc_prepare_write_char_descr(clone.gattc_if, request.target, target_handle,
           write->offset, write->len, write->value, ESP_GATT_AUTH_REQ_NONE)
-      : esp_ble_gattc_prepare_write(clone.gattc_if, request.target, write->handle,
+      : esp_ble_gattc_prepare_write(clone.gattc_if, request.target, target_handle,
           write->offset, write->len, write->value, ESP_GATT_AUTH_REQ_NONE);
   if (result != ESP_OK) {
     state->request = (AttRequest){0};
@@ -54,7 +60,7 @@ void start_execute(esp_ble_gatts_cb_param_t *param) {
   GattTransactions *state = &clone.transactions;
   const typeof(param->exec_write) *execute = &param->exec_write;
   AttRequest request = {AttExecute, execute->conn_id, clone.target_client_conn_id,
-                        execute->trans_id, 0, 0, false, false};
+                        execute->trans_id, 0, 0, false, false, 0};
   if (!connected || att_busy() || (state->queued && state->prepared_owner != execute->conn_id)) {
     att_reply(request, ESP_GATT_BUSY, NULL);
     return;

@@ -97,8 +97,16 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
         free(out);
         break;
       }
+      uint16_t target_handle = clone_target_handle(param->write.handle);
+      if (!target_handle) {
+        if (param->write.need_rsp)
+          esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+              param->write.trans_id, ESP_GATT_INVALID_HANDLE, NULL);
+        free(out);
+        break;
+      }
       char uuid[38] = {0};
-      bool isDescriptor = handle_is_descriptor(param->write.handle);
+      bool isDescriptor = handle_is_descriptor(target_handle);
       uint16_t write_len = param->write.len;
       if (write_len > ESP_GATT_MAX_ATTR_LEN) { free(out); break; }
       uint8_t *write_value = NULL;
@@ -119,10 +127,10 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
           break;
         }
         pending_write = (pending_write_t){true, isDescriptor, param->write.conn_id,
-                                          param->write.trans_id, param->write.handle,
+                                          param->write.trans_id, target_handle,
                                           esp_timer_get_time()};
       }
-      get_uuid_for_handle(param->write.handle, uuid);
+      get_uuid_for_handle(target_handle, uuid);
 
       esp_gatt_write_type_t write_type = param->write.need_rsp
         ? ESP_GATT_WRITE_TYPE_RSP
@@ -134,7 +142,7 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
          * We need to enabled the notification for the PARENT
          * characterics, not this desc handle..
          */
-        uint16_t notification_target_handle = get_desc_parent_char_handle(param->write.handle);
+        uint16_t notification_target_handle = get_desc_parent_char_handle(target_handle);
         uint16_t bit_value = param->write.value[1]<<8 | param->write.value[0];
 
         if (bit_value == 0x0001) {
@@ -187,14 +195,14 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
         clone.gattc_if,
         clone.target_client_conn_id,
         param->write.trans_id,
-        param->write.handle,
+        target_handle,
         0,
         uuid,
         hex_value
       );
 
       bool accepted = !connected || write_queue_add(param->write.conn_id,
-          param->write.handle, isDescriptor, param->write.need_rsp,
+          target_handle, isDescriptor, param->write.need_rsp,
           write_value, write_len);
       if (!accepted) {
         gatt_send_output("Target write queue exhausted", false);
@@ -209,7 +217,7 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
         break;
       }
       if (!isDescriptor)
-        record_bulk_write(param->write.handle, write_len, param->write.need_rsp);
+        record_bulk_write(target_handle, write_len, param->write.need_rsp);
 
       free(out);
       free(hex_value);
@@ -217,7 +225,7 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
       // Write to cache
       for (int x = 0; x < clone.num_services; x++) {
         for (int y = 0; y < clone.services[x].num_chars; y++) {
-          if (clone.services[x].chars[y].char_handle == param->write.handle) {
+          if (clone.services[x].chars[y].char_handle == target_handle) {
             uint8_t *cached = (uint8_t*)malloc(write_len ? write_len : 1);
             if (cached) {
               if (write_len) memcpy(cached, write_value, write_len);
@@ -228,7 +236,7 @@ void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
             goto after_find_write;
           } else {
             for (int z = 0; z < clone.services[x].chars[y].num_descs; z++) {
-              if (clone.services[x].chars[y].descs[z].desc_handle == param->write.handle) {
+              if (clone.services[x].chars[y].descs[z].desc_handle == target_handle) {
                 uint8_t *cached = (uint8_t*)malloc(write_len ? write_len : 1);
                 if (cached) {
                   if (write_len) memcpy(cached, write_value, write_len);
@@ -272,12 +280,24 @@ after_find_write:
       clone_service_deleted(param);
       break;
     case ESP_GATTS_ADD_CHAR_EVT:
-      if (param->add_char.status != ESP_GATT_OK)
-        clone_failed("add characteristic", param->add_char.status);
+      if (param->add_char.status == ESP_GATT_OK) {
+        if (!clone_char_added(param)) clone_failed("map characteristic", ESP_GATT_INVALID_HANDLE);
+      } else {
+        if (param->add_char.status == ESP_GATT_ERROR &&
+            clone_standard_service(param->add_char.service_handle))
+          ESP_LOGW(TAG, "Standard characteristic already supplied by stack");
+        else clone_failed("add characteristic", param->add_char.status);
+      }
       break;
     case ESP_GATTS_ADD_CHAR_DESCR_EVT:
-      if (param->add_char_descr.status != ESP_GATT_OK)
-        clone_failed("add descriptor", param->add_char_descr.status);
+      if (param->add_char_descr.status == ESP_GATT_OK) {
+        if (!clone_descr_added(param)) clone_failed("map descriptor", ESP_GATT_INVALID_HANDLE);
+      } else {
+        if (param->add_char_descr.status == ESP_GATT_ERROR &&
+            clone_standard_service(param->add_char_descr.service_handle))
+          ESP_LOGW(TAG, "Standard descriptor already supplied by stack");
+        else clone_failed("add descriptor", param->add_char_descr.status);
+      }
       break;
     case ESP_GATTS_CONNECT_EVT: {
       /**

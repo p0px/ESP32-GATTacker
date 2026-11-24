@@ -70,6 +70,11 @@ void central_transactions_disconnected(uint16_t connection);
 void target_transactions_disconnected(void);
 
 void clone_failed(const char *operation, int status);
+bool clone_standard_service(uint16_t handle);
+bool clone_char_added(const esp_ble_gatts_cb_param_t *param);
+bool clone_descr_added(const esp_ble_gatts_cb_param_t *param);
+uint16_t clone_target_handle(uint16_t local_handle);
+uint16_t clone_local_handle(uint16_t target_handle);
 void clone_create_services(void);
 void clone_register(esp_gatt_if_t interface, esp_ble_gatts_cb_param_t *param);
 void clone_created(esp_ble_gatts_cb_param_t *param);

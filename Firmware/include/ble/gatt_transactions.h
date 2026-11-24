@@ -22,6 +22,7 @@ typedef struct {
   uint16_t offset;
   bool descriptor;
   bool abandoned;
+  uint16_t central_handle;
 } AttRequest;
 
 /* Bluedroid's GATT callback task owns these requests until teardown quiesces it. */
