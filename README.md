@@ -7,7 +7,7 @@ The ESP32-S3 runs on its own. The optional
 controls it over GPIO UART and can save captures to SD.
 The Flipper repository currently requires access.
 
-![UI](./Doc/img/ui_running.png)
+![GATTacker web UI showing a connected session and packet capture](./Doc/img/ui_running.png)
 
 ## Features
 
