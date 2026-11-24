@@ -17,3 +17,5 @@ bool uart_bridge_rules_active(void);
 bool uart_bridge_connected(void);
 void uart_bridge_target_mac(char *out, size_t size);
 bool uart_bridge_phone_connected(void);
+void uart_bridge_set_selected(const char *mac);
+void uart_bridge_selected_mac(char *out, size_t size);

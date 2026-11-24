@@ -13,7 +13,7 @@ def main() -> None:
   tests = Path(__file__).resolve().parent
   source = (tests.parent / "main/ble/GattAttackApp.c").read_text(encoding="utf-8")
   config = source[source.index("static const uint32_t HOOK_TIMEOUT_MS"):
-                  source.index("TaskHandle_t gattTaskHandle")]
+                  source.index("GattAttackState gattAttackState")]
   run = source[source.index("char *run_hook("):source.index("void gatt_send_output(")]
   reply = source[source.index('  if (strcmp(ps->action, "hookret")'):
                  source.index('  if (strcmp(ps->action, "enable_hooks")')]

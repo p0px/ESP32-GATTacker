@@ -7,6 +7,7 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "ble/GattAttackApp.h"
+#include "uart/uart_bridge.h"
 #include <unistd.h>
 #include "lwip/sockets.h"
 
@@ -16,6 +17,7 @@ typedef enum {
   WS_OPT_SET_WIFI,
   WS_OPT_REBOOT,
   WS_OPT_GATTATTACK,
+  WS_OPT_BOARD_STATUS = 90,
 } OPTS;
 
 struct async_resp_arg {
@@ -247,6 +249,17 @@ esp_err_t ws_handler(httpd_req_t *req) {
     if (cJSON_IsNumber(option)) {
       OPTS opt = (OPTS)option->valueint;
       switch (opt) {
+      case WS_OPT_BOARD_STATUS: {
+        const cJSON *command = cJSON_GetObjectItemCaseSensitive(root, "command");
+        if (cJSON_IsString(command) && !strcmp(command->valuestring, "status")) {
+          resp_arg->res = gatt_state_json(gattAttackState);
+          break;
+        }
+        cJSON_AddBoolToObject(res, "success", false);
+        cJSON_AddStringToObject(res, "error", "Unknown board command");
+        resp_arg->res = cJSON_Print(res);
+        break;
+      }
       case WS_OPT_SET_WIFI:
         cJSON_AddBoolToObject(res, "success", false);
         cJSON_AddStringToObject(res, "error", "Use Wi-Fi Settings");
@@ -258,7 +271,9 @@ esp_err_t ws_handler(httpd_req_t *req) {
         break;
       case WS_OPT_GATTATTACK: {
         cJSON *item = cJSON_GetObjectItem(root, "action");
-        if (cJSON_IsString(item) && item->valuestring != NULL) {
+        if (cJSON_IsString(item) && !strcmp(item->valuestring, "status")) {
+          resp_arg->res = gatt_state_json(gattAttackState);
+        } else if (cJSON_IsString(item) && item->valuestring != NULL) {
           GattAttackWebEventParams ps;
           ps.id = -1;
           ps.request_id = 0;

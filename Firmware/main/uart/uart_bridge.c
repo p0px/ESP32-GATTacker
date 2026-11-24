@@ -11,8 +11,11 @@
 #include "network_pair.h"
 #include "agent_api.h"
 #include "capture/capture_wire.h"
+#include "wifi/ws.h"
+#include "cJSON.h"
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef CONFIG_GATTACKER_UART_TX
@@ -69,7 +72,7 @@ void uart_bridge_traffic(const char *operation, const char *direction,
   snprintf(event, WIRE_MAX, "traffic\t%c\t%s\t%s\t%u\t%.1034s\t%s", op,
            direction, uuid, handle, data, strlen(data) > 1034 ? "truncated" : operation);
   agent_preview(event);
-  if (uart_bridge_connected()) uart_bridge_event(event);
+  if (uart_bridge_connected() || ws_has_clients()) uart_bridge_event(event);
   heap_caps_free(event);
 }
 
@@ -106,15 +109,30 @@ static void transmit_task(void *context) {
   UartPacket packet;
   uint8_t frame[WIRE_FRAME_MAX];
   for (;;) {
+    bool capture = false;
     if (xQueueReceive(outgoing, &packet, 0) != pdTRUE) {
       if (capture_wire_poll(packet.text, sizeof(packet.text))) {
         packet.kind = WireEvent;
         packet.id = 0;
+        capture = true;
       } else if (xQueueReceive(outgoing, &packet, pdMS_TO_TICKS(10)) != pdTRUE)
         continue;
     }
     size_t size = wire_encode(packet.kind, packet.id, packet.text, frame, sizeof(frame));
     if (size) uart_write_bytes(UART_NUM_1, frame, size);
+    if (capture || !ws_has_clients() || !strncmp(packet.text, "wifi_key\t", 9) ||
+        !strncmp(packet.text, "pair_request\t", 13) ||
+        !strncmp(packet.text, "capture_export_", 15)) continue;
+    cJSON *json = cJSON_CreateObject();
+    if (!json) continue;
+    cJSON_AddStringToObject(json, "gpio", packet.text);
+    cJSON_AddNumberToObject(json, "request_id", packet.id);
+    char *body = cJSON_PrintUnformatted(json);
+    if (body) {
+      msg_clients(body);
+      free(body);
+    }
+    cJSON_Delete(json);
   }
 }
 

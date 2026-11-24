@@ -6,6 +6,7 @@
 #include "capture/capture_store.h"
 #include "capture/capture_export.h"
 #include "capture/flipper_sd.h"
+#include "ble/GattAttackApp.h"
 #include "esp_log.h"
 #include "esp_system.h"
 
@@ -13,6 +14,7 @@
 
 void app_main(void) {
   ESP_LOGI(TAG, "Reset reason: %d", (int)esp_reset_reason());
+  gatt_app_init();
   CaptureRing *capture = capture_ring_create();
   capture_vhci_attach(capture);
   capture_store_init(capture);

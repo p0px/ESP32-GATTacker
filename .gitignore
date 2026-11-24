@@ -3,6 +3,8 @@ Firmware/build/*
 sdkconfig.old
 Firmware/managed_components/
 .venv/
+__pycache__/
+*.pyc
 .local/
 UI/node_modules/
 UI/dist/

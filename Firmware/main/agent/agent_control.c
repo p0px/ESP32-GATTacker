@@ -60,15 +60,6 @@ static bool number(const cJSON *args, const char *key, uint32_t *out) {
   return true;
 }
 
-static bool valid_mac(const char *mac) {
-  if (strlen(mac) != 17) return false;
-  for (unsigned i = 0; i < 17; i++) {
-    if (i % 3 == 2 ? mac[i] != ':' : !strchr("0123456789abcdefABCDEF", mac[i]))
-      return false;
-  }
-  return true;
-}
-
 static void update_operations(void) {
   char target[18];
   uart_bridge_target_mac(target, sizeof(target));
@@ -134,7 +125,8 @@ static cJSON *session_control(const char *name, const cJSON *args) {
   if (stop && gattAttackState == GATT_ATTACK_STATE_SCANNING)
     return failure("Wait for scan completion");
   const char *mac = string(args, "mac");
-  if (!scan && !stop && !valid_mac(mac)) return failure("A target MAC is required");
+  if (!scan && !stop && !gatt_parse_mac(mac, NULL))
+    return failure("A target MAC is required");
   GattAttackWebEventParams params = {.action = scan ? "scan" : stop ? "stop" : "start",
                                       .mac = mac};
   gatt_web_event(&params);

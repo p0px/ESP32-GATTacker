@@ -17,6 +17,9 @@ extern "C" {
 #endif
 
 void gatt_web_event(GattAttackWebEventParams *params);
+void gatt_app_init(void);
+bool gatt_parse_mac(const char *text, uint8_t address[6]);
+char *gatt_state_json(int state);
 
 #ifdef __cplusplus
 }

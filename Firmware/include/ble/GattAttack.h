@@ -24,6 +24,7 @@ extern "C" {
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include <inttypes.h>
+#include "ble/gatt_transactions.h"
 
 /* Structs */
 typedef struct desc_t {
@@ -51,9 +52,18 @@ typedef struct service_t {
   char_t *chars;
   uint8_t num_chars;
   uint8_t num_handles;
+  bool started;
 } service_t;
 
 typedef struct clone_t {
+  bool server_ready;
+  esp_bd_addr_t central_bda;
+  uint16_t verified_services;
+  bool database_changed;
+  bool refresh_pending;
+  uint16_t refresh_deleting;
+  GattTransactions transactions;
+  GattWriteQueue writes;
   esp_bd_addr_t target;
   uint16_t gatts_if;
   uint16_t gattc_if;

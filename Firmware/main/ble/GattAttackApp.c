@@ -17,11 +17,9 @@
 
 #define TAG "GattAttackApp"
 
-typedef struct {
-  esp_bd_addr_t target;
-} GattAttackParams;
+extern bool connected;
 static void scan_devices(void);
-static void session_task(void *taskParams);
+static SemaphoreHandle_t session_mutex;
 
 static atomic_bool hooks_enabled = false;
 static atomic_int hook_fault = 0; // 1 = deadline, 2 = transport queue
@@ -37,8 +35,41 @@ static const unsigned HOOK_TIMEOUT_LIMIT = 3;
 static unsigned hook_timeout_streak = 0; // Protected by hook_mux.
 static atomic_uint hook_last_ms = 0;
 
-TaskHandle_t gattTaskHandle = NULL;
 GattAttackState gattAttackState = GATT_ATTACK_STATE_HOME;
+
+static int hex_digit(char value) {
+  if (value >= '0' && value <= '9') return value - '0';
+  if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+  if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+  return -1;
+}
+
+bool gatt_parse_mac(const char *text, uint8_t address[6]) {
+  if (!text || strlen(text) != 17) return false;
+  for (unsigned i = 0; i < 6; i++) {
+    int high = hex_digit(text[i * 3]);
+    int low = hex_digit(text[i * 3 + 1]);
+    if (high < 0 || low < 0 || (i < 5 && text[i * 3 + 2] != ':')) return false;
+    if (address) address[i] = (uint8_t)((high << 4) | low);
+  }
+  return true;
+}
+
+static void send_error(const char *message) {
+  cJSON *reply = cJSON_CreateObject();
+  if (!reply) return;
+  cJSON_AddBoolToObject(reply, "success", false);
+  cJSON_AddStringToObject(reply, "error", message);
+  char *json = cJSON_PrintUnformatted(reply);
+  if (json) msg_clients(json);
+  free(json);
+  cJSON_Delete(reply);
+}
+
+void gatt_app_init(void) {
+  if (!session_mutex) session_mutex = xSemaphoreCreateMutex();
+  ESP_ERROR_CHECK(session_mutex ? ESP_OK : ESP_ERR_NO_MEM);
+}
 
 bool should_run_hooks(void) { return ws_has_clients() && atomic_load(&hooks_enabled); }
 
@@ -139,9 +170,18 @@ static void scan_task(void *params) {
   vTaskDelete(NULL);
 };
 
-void gatt_send_state(int state) {
+char *gatt_state_json(int state) {
   cJSON *res = cJSON_CreateObject();
+  if (!res) return NULL;
   cJSON_AddNumberToObject(res, "state", state);
+  char selected[18];
+  char target[18];
+  uart_bridge_selected_mac(selected, sizeof(selected));
+  uart_bridge_target_mac(target, sizeof(target));
+  cJSON_AddStringToObject(res, "selected_mac", selected);
+  cJSON_AddStringToObject(res, "target_mac", target);
+  cJSON_AddBoolToObject(res, "target_connected", connected);
+  cJSON_AddBoolToObject(res, "central_connected", uart_bridge_phone_connected());
   cJSON_AddNumberToObject(res, "free_heap", heap_caps_get_free_size(MALLOC_CAP_8BIT));
   cJSON_AddNumberToObject(res, "min_free_heap", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
   cJSON_AddNumberToObject(res, "uptime_ms", esp_timer_get_time() / 1000);
@@ -156,20 +196,28 @@ void gatt_send_state(int state) {
                           : fault == 2 ? "Hooks disabled: request queue unavailable; original "
                                          "traffic passes through. Re-enable hooks to retry."
                                        : "");
-  char *json = cJSON_Print(res);
-
-  msg_clients(json);
-  uart_bridge_state();
-
-  free(json);
+  char *json = cJSON_PrintUnformatted(res);
   cJSON_Delete(res);
+  return json;
+}
+
+void gatt_send_state(int state) {
+  char *json = gatt_state_json(state);
+  if (json) msg_clients(json);
+  uart_bridge_state();
+  free(json);
 };
 
 static void scan_devices(void) {
   gatt_send_state((int)gattAttackState);
 
   // scan for devices
-  ble_stack_init();
+  if (!ble_stack_init()) {
+    gattAttackState = GATT_ATTACK_STATE_FAILED;
+    gatt_send_output("Bluetooth initialization failed", false);
+    gatt_send_state(gattAttackState);
+    return;
+  }
 
   start_ble_scan(10, NULL);
 
@@ -191,50 +239,36 @@ static void scan_devices(void) {
 };
 
 static void stop_session(void) {
-  if (gattAttackState == GATT_ATTACK_STATE_SCANNING)
+  xSemaphoreTake(session_mutex, portMAX_DELAY);
+  if (gattAttackState == GATT_ATTACK_STATE_SCANNING ||
+      gattAttackState == GATT_ATTACK_STATE_HOME) {
+    xSemaphoreGive(session_mutex);
     return;
-  stop_gatt_attack();
-
-  if (gattTaskHandle != NULL) {
-    vTaskDelete(gattTaskHandle);
-    gattTaskHandle = NULL;
   }
-
+  stop_gatt_attack();
   gattAttackState = GATT_ATTACK_STATE_HOME;
   uart_bridge_target("");
   uart_bridge_phone(false);
   gatt_send_state((int)gattAttackState);
+  xSemaphoreGive(session_mutex);
 };
 
 static void start_session(esp_bd_addr_t target) {
-  if (gattTaskHandle || gattAttackState == GATT_ATTACK_STATE_SCANNING)
+  xSemaphoreTake(session_mutex, portMAX_DELAY);
+  if (gattAttackState != GATT_ATTACK_STATE_HOME &&
+      gattAttackState != GATT_ATTACK_STATE_SCAN_RES) {
+    xSemaphoreGive(session_mutex);
     return;
-  GattAttackParams *params = calloc(1, sizeof(GattAttackParams));
-  if (!params)
-    return;
-  memcpy(params->target, target, sizeof(esp_bd_addr_t));
+  }
   char target_mac[18];
   snprintf(target_mac, sizeof(target_mac), "%02X:%02X:%02X:%02X:%02X:%02X",
            target[0], target[1], target[2], target[3], target[4], target[5]);
-  BaseType_t ret = xTaskCreate(&session_task, "gatk", 20000, params, 0, &gattTaskHandle);
-  if (ret != pdPASS) {
-    free(params);
-    gattTaskHandle = NULL;
-    ESP_LOGE(TAG, "Cannot allocate attack task");
-    return;
-  }
   uart_bridge_target(target_mac);
+  uart_bridge_set_selected(target_mac);
   gattAttackState = GATT_ATTACK_STATE_START;
   gatt_send_state((int)gattAttackState);
-};
-
-static void session_task(void *taskParams) {
-  GattAttackParams *params = taskParams;
-  start_gatt_attack(params->target);
-  free(params);
-  while (1) {
-    vTaskDelay(20 / portTICK_PERIOD_MS);
-  }
+  start_gatt_attack(target);
+  xSemaphoreGive(session_mutex);
 };
 
 void gatt_web_event(GattAttackWebEventParams *ps) {
@@ -246,36 +280,28 @@ void gatt_web_event(GattAttackWebEventParams *ps) {
   if (strcmp(ps->action, "start") == 0) {
     if (ps->mac != NULL) {
       esp_bd_addr_t target;
-      unsigned values[6];
-      if (sscanf(ps->mac, "%x:%x:%x:%x:%x:%x", &values[0], &values[1], &values[2], &values[3],
-                 &values[4], &values[5]) == 6) {
-        for (int i = 0; i < 6; i++) {
-          target[i] = (uint8_t)values[i];
-        }
-        start_session(target);
-        return;
-      }
+      if (!gatt_parse_mac(ps->mac, target)) send_error("Invalid target address");
+      else start_session(target);
+      return;
     }
 
-    // Validate ID sent
     if (ps->id < 0 || ps->id >= device_count) {
-      cJSON *root = cJSON_CreateObject();
-      cJSON_AddBoolToObject(root, "success", false);
-      cJSON_AddStringToObject(root, "error", "Invalid Device ID");
-
-      // Convert the root object to a formatted JSON string
-      char *json_string = cJSON_Print(root);
-
-      // Send json and free
-      if (json_string) {
-        msg_clients(json_string);
-        free(json_string);
-      }
-      cJSON_Delete(root);
+      send_error("Invalid device ID");
       return;
     }
 
     start_session(devices[ps->id].bd_addr);
+    return;
+  }
+
+  if (strcmp(ps->action, "select") == 0) {
+    if (gattAttackState != GATT_ATTACK_STATE_HOME &&
+        gattAttackState != GATT_ATTACK_STATE_SCAN_RES) return;
+    const char *mac = ps->mac;
+    if (!mac || !strcmp(mac, "-")) uart_bridge_set_selected("");
+    else if (gatt_parse_mac(mac, NULL)) uart_bridge_set_selected(mac);
+    else send_error("Invalid selected address");
+    gatt_send_state(gattAttackState);
     return;
   }
 
@@ -284,13 +310,18 @@ void gatt_web_event(GattAttackWebEventParams *ps) {
   }
 
   if (strcmp(ps->action, "scan") == 0) {
-    if (gattTaskHandle || gattAttackState == GATT_ATTACK_STATE_SCANNING)
+    xSemaphoreTake(session_mutex, portMAX_DELAY);
+    if (gattAttackState != GATT_ATTACK_STATE_HOME &&
+        gattAttackState != GATT_ATTACK_STATE_SCAN_RES) {
+      xSemaphoreGive(session_mutex);
       return;
+    }
     gattAttackState = GATT_ATTACK_STATE_SCANNING;
     if (xTaskCreate(scan_task, "gatk", 6000, NULL, 0, NULL) != pdPASS) {
       gattAttackState = GATT_ATTACK_STATE_HOME;
       gatt_send_state(gattAttackState);
     }
+    xSemaphoreGive(session_mutex);
     return;
   }
 

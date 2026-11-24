@@ -159,8 +159,15 @@ export function useBoardSession() {
       }
       if (typeof data.state === "number") {
         const phase = data.state;
-        setSession(previous => previous.state === phase ? previous :
-          phase >= 3 && previous.state >= 3 ? { ...previous, state: phase } : { state: phase });
+        if (typeof data.target_connected === "boolean" &&
+            typeof data.central_connected === "boolean") {
+          setSession({ state: phase, targetConnected: data.target_connected,
+            centralConnected: data.central_connected, mac: data.target_mac || "" });
+          linksReceivedAt = Date.now();
+        } else {
+          setSession(previous => previous.state === phase ? previous :
+            phase >= 3 && previous.state >= 3 ? { ...previous, state: phase } : { state: phase });
+        }
         if (phase >= 3 && scan.current.state < 3) requestLinks();
         if (data.state !== scan.current.state && data.state !== 2) {
           scan.current.loaded = false;

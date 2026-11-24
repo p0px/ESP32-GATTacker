@@ -72,6 +72,14 @@ void uart_bridge_target_mac(char *out, size_t size) {
   if (size) snprintf(out, size, "%s", target);
 }
 
+void uart_bridge_set_selected(const char *mac) {
+  snprintf(selected, sizeof(selected), "%s", mac ? mac : "");
+}
+
+void uart_bridge_selected_mac(char *out, size_t size) {
+  if (size) snprintf(out, size, "%s", selected);
+}
+
 bool uart_bridge_phone_connected(void) { return atomic_load(&phone_connected); }
 
 void uart_command_state(void) {
@@ -101,16 +109,6 @@ static void scan_results(void) {
              i, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], devices[i].rssi, name);
     uart_bridge_event(event);
   }
-}
-
-static bool valid_mac(const char *mac) {
-  if (strlen(mac) != 17) return false;
-  for (unsigned i = 0; i < 17; i++) {
-    if (i % 3 == 2) {
-      if (mac[i] != ':') return false;
-    } else if (!strchr("0123456789abcdefABCDEF", mac[i])) return false;
-  }
-  return true;
 }
 
 static void send_rules(void) {
@@ -146,12 +144,22 @@ static bool update_rule(char **fields, size_t count) {
 }
 
 static void send_services(void) {
-  for (unsigned i = 0; i < clone.num_services; i++) {
+  unsigned count = 0;
+  for (unsigned i = 0; i < clone.num_services && count < 64; i++) {
     char event[112], uuid[40];
     print_uuid(clone.services[i].service_uuid, uuid);
-    snprintf(event, sizeof(event), "service\t%u\t%u\t%s", i,
-             clone.services[i].num_chars, uuid);
+    snprintf(event, sizeof(event), "service\tS\t%u\t%s",
+             clone.services[i].service_handle, uuid);
     uart_bridge_event(event);
+    count++;
+    for (unsigned j = 0; j < clone.services[i].num_chars && count < 64; j++) {
+      const char_t *characteristic = &clone.services[i].chars[j];
+      print_uuid(characteristic->char_uuid, uuid);
+      snprintf(event, sizeof(event), "service\tC:%02X\t%u\t%s",
+               characteristic->property, characteristic->char_handle, uuid);
+      uart_bridge_event(event);
+      count++;
+    }
   }
 }
 
@@ -180,27 +188,31 @@ static void execute(uint16_t id, char **f, size_t count) {
         gattAttackState != GATT_ATTACK_STATE_SCAN_RES)
       result = "error\tstop active session first";
     else {
-      selected[0] = 0;
+      uart_bridge_set_selected("");
       gatt_web_event(&params);
+      gatt_send_state(gattAttackState);
       if (gattAttackState != GATT_ATTACK_STATE_SCANNING)
         result = "error\tscan could not start; retry";
     }
   } else if (!strcmp(f[0], "select")) {
-    if (count != 2 || (strcmp(f[1], "-") && !valid_mac(f[1])))
+    if (count != 2 || (strcmp(f[1], "-") && !gatt_parse_mac(f[1], NULL)))
       result = "error\tinvalid selected address";
     else if (gattAttackState != GATT_ATTACK_STATE_HOME &&
              gattAttackState != GATT_ATTACK_STATE_SCAN_RES)
       result = "error\tstop the session before changing the target";
-    else snprintf(selected, sizeof(selected), "%s", strcmp(f[1], "-") ? f[1] : "");
+    else {
+      uart_bridge_set_selected(strcmp(f[1], "-") ? f[1] : "");
+      gatt_send_state(gattAttackState);
+    }
   } else if (!strcmp(f[0], "start")) {
-    if (count != 2 || !valid_mac(f[1]))
+    if (count != 2 || !gatt_parse_mac(f[1], NULL))
       result = "error\tinvalid target address";
     else if (gattAttackState != GATT_ATTACK_STATE_HOME &&
              gattAttackState != GATT_ATTACK_STATE_SCAN_RES)
       result = "error\tboard busy";
     else {
       params.mac = f[1];
-      snprintf(selected, sizeof(selected), "%s", f[1]);
+      uart_bridge_set_selected(f[1]);
       uart_command_target(f[1]);
       gatt_web_event(&params);
     }

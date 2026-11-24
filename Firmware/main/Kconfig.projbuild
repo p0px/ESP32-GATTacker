@@ -1,0 +1,13 @@
+menu "GATTacker Flipper UART"
+config GATTACKER_UART_TX
+  int "ESP32 TX GPIO (connect to Flipper RX)"
+  range 0 48
+  default 43
+config GATTACKER_UART_RX
+  int "ESP32 RX GPIO (connect to Flipper TX)"
+  range 0 48
+  default 44
+config GATTACKER_UART_BAUD
+  int "UART baud rate"
+  default 115200
+endmenu

@@ -130,3 +130,15 @@ index 1161da62b5..f69067da26 100644
  
  typedef struct hdl_cfg {
      UINT16               gatt_start_hdl;
+diff --git a/components/bt/host/bluedroid/stack/gatt/gatt_api.c b/components/bt/host/bluedroid/stack/gatt/gatt_api.c
+--- a/components/bt/host/bluedroid/stack/gatt/gatt_api.c
++++ b/components/bt/host/bluedroid/stack/gatt/gatt_api.c
+@@ -557,5 +557,6 @@ void GATTS_StopService (UINT16 service_handle)
+-    /* Index 0 is reserved for GATT, and is never stopped */
+-    if ( (ii > 0) && (ii < GATT_MAX_SR_PROFILES) && (gatt_cb.sr_reg[ii].in_use) ) {
++    /* bad_blues disables the built-in GATT service; slot 0 belongs to the app.
++     * Release it before deleting its database, just like every other slot. */
++    if ( (ii < GATT_MAX_SR_PROFILES) && (gatt_cb.sr_reg[ii].in_use) ) {
+ #if(SDP_INCLUDED == TRUE && CLASSIC_BT_GATT_INCLUDED == TRUE)
+         if (gatt_cb.sr_reg[ii].sdp_handle) {
+             SDP_DeleteRecord(gatt_cb.sr_reg[ii].sdp_handle);

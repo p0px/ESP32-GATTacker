@@ -56,11 +56,11 @@ static void bluedroid_init() {
     return;
   };
 
-  vTaskDelay(200 / portTICK_PERIOD_MS);  // Delay for 200 msecs as a workaround to an apparent Arduino environment issue.
+  // Let Bluedroid finish enabling before registration or scan setup.
+  vTaskDelay(pdMS_TO_TICKS(200));
   initialized = true;
 }
 
-// https://github.com/espressif/arduino-esp32/blob/1cdd8e8ce0d0003518fb2b68365bb4f2809f11d1/cores/esp32/esp32-hal-bt.c#L49
 bool ble_stack_init() {
   if (initialized) {
     return true;
@@ -70,7 +70,8 @@ bool ble_stack_init() {
   esp_bt_controller_config_t cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
   
   if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
-    return true;
+    bluedroid_init();
+    return initialized;
   }
   esp_err_t ret;
   if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE) {
@@ -78,7 +79,6 @@ bool ble_stack_init() {
       ESP_LOGE(TAG, "initialize controller failed: %s", esp_err_to_name(ret));
       return false;
     }
-    while (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE) {}
   }
   if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_INITED) {
     if ((ret = esp_bt_controller_enable(esp_bt_mode)) != ESP_OK) {
@@ -88,13 +88,12 @@ bool ble_stack_init() {
   }
   if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
     bluedroid_init();
-    return true;
+    return initialized;
   }
   ESP_LOGE(TAG, "BT Start failed");
   return false;
 }
 
-// https://github.com/espressif/arduino-esp32/blob/1cdd8e8ce0d0003518fb2b68365bb4f2809f11d1/cores/esp32/esp32-hal-bt.c#L93
 void ble_stack_deinit(bool release_memory) {
   if (!initialized) {
     return;
@@ -171,7 +170,8 @@ void start_ble_scan(int scan_duration_seconds, void (*callback)()) {
 
 
   // Wait for the semaphore to be given when scanning is complete
-  if (xSemaphoreTake(scan_complete_semaphore, pdMS_TO_TICKS((scan_duration_seconds + 2) * 1000)) == pdTRUE) {
+  if (xSemaphoreTake(scan_complete_semaphore,
+                     pdMS_TO_TICKS((scan_duration_seconds + 2) * 1000)) == pdTRUE) {
     if (callback != NULL) {
       callback();
     } else {

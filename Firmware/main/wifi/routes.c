@@ -58,8 +58,11 @@ static esp_err_t main_handler(httpd_req_t *req) {
   // Construct the base path
   strlcpy(filepath, rest_context->base_path, sizeof(filepath));
 
-  // Handle path ending with "/" by appending "index.html"
-  if (req->uri[strlen(req->uri) - 1] == '/') {
+  // Browser routes share the SPA entry point on both the AP and station IP.
+  if (!strcmp(req->uri, "/home") || !strcmp(req->uri, "/settings") ||
+      !strcmp(req->uri, "/about")) {
+    strlcat(filepath, "/index.html", sizeof(filepath));
+  } else if (req->uri[strlen(req->uri) - 1] == '/') {
     strlcat(filepath, "/index.html", sizeof(filepath));
   } else {
     // Regular path handling
