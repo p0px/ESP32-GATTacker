@@ -1,15 +1,6 @@
-
-#include "ble/GattAttack.h"
-#include "ble/GattAttackApp.h"
-#include "ble/payload.h"
-#include "uart/uart_bridge.h"
-#include "esp_timer.h"
-#include <stdatomic.h>
+#include "gatt_internal.h"
 
 
-extern GattAttackState gattAttackState;
-
-#define TAG "GATT Attack"
 
 // Used only while the target is disconnected. NULL means uncached, not an empty value.
 static const esp_attr_value_t *cached_attribute(uint16_t handle) {
@@ -27,7 +18,7 @@ static const esp_attr_value_t *cached_attribute(uint16_t handle) {
   return NULL;
 }
 
-static void reply_cached_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+void reply_cached_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
   const esp_attr_value_t *value = cached_attribute(param->read.handle);
   esp_gatt_rsp_t response = {0};
   response.attr_value.handle = param->read.handle;
@@ -51,7 +42,7 @@ static void reply_cached_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *
 }
 
 
-static atomic_bool shutdown_gatt_attack = false;
+atomic_bool shutdown_gatt_attack = false;
 int retries = 0;
 int MAX_RETRIES = 3;
 bool connected = false;
@@ -62,19 +53,9 @@ uint8_t cloned_service_num = 0; // number of cloned services
 uint8_t last_end_handle = 0; // used for calculating the # of handles needed
 
 
-// A write response belongs to the original phone request, not the most recent
-// read or write-without-response seen on either connection.
-typedef struct pending_write_t {
-  bool active;
-  bool descriptor;
-  uint16_t conn_id;
-  uint32_t trans_id;
-  uint16_t handle;
-  int64_t started_us;
-} pending_write_t;
-static pending_write_t pending_write;
+pending_write_t pending_write;
 
-static void finish_pending_write(esp_gatt_status_t status) {
+void finish_pending_write(esp_gatt_status_t status) {
   if (!pending_write.active) return;
   const pending_write_t request = pending_write;
   pending_write.active = false;
@@ -88,7 +69,7 @@ static void finish_pending_write(esp_gatt_status_t status) {
 
 /* Utils */
 
-static void log_and_send_json(
+void log_and_send_json(
   const char *operation, const char *direction, const char *, uint32_t,
   uint32_t, uint32_t, uint16_t handle, uint32_t, const char *uuid,
   const char *extra_data) {
@@ -128,7 +109,7 @@ uint8_t* hex_string_to_bytes(const char *hex_string, uint16_t *out_len) {
   return decode_hex_payload(hex_string, out_len, ESP_GATT_MAX_ATTR_LEN);
 }
 
-static void apply_hook(const char *type, const char *uuid, char **hex,
+void apply_hook(const char *type, const char *uuid, char **hex,
                        uint8_t **bytes, uint16_t *length) {
   if (!*hex) return;
   char *reply = uart_bridge_hook(type, uuid, *hex);
@@ -366,24 +347,3 @@ void get_uuid_for_handle(uint16_t handle, char* out) {
     }
   }
 };
-
-#include "gatt_reads.inc"
-#include "gatt_reliable_write.inc"
-static void connection_failed(const char *operation);
-
-/**
- * server_event
- *
- * Handles the GATT Server
- * events. This is what actually
- * is the copy of the target device
- * and handles connections from
- * victims devices.
- *
- * @param esp_gatts_cb_event_t event
- * @param esp_gatt_if_t gatts_if
- * @param esp_ble_gatts_cb_param_t *param
- */
-#include "gatt_clone.inc"
-#include "gatt_database.inc"
-#include "gatt_write_queue.inc"

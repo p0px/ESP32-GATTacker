@@ -1,3 +1,18 @@
+#include "gatt_internal.h"
+
+/**
+ * server_event
+ *
+ * Handles the GATT Server
+ * events. This is what actually
+ * is the copy of the target device
+ * and handles connections from
+ * victims devices.
+ *
+ * @param esp_gatts_cb_event_t event
+ * @param esp_gatt_if_t gatts_if
+ * @param esp_ble_gatts_cb_param_t *param
+ */
 void server_event(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
                   esp_ble_gatts_cb_param_t *param) {
   if (shutdown_gatt_attack) return;
@@ -311,22 +326,3 @@ after_find_write:
       break;
   }
 };
-
-/**
- * client_event
- *
- * Handles the GATT Client
- * events. This is our fake
- * connection to the target
- * device that discovers the
- * services, clones them, and
- * then start the GATT Server.
- *
- * The connection tries to stay
- * open for a number of attempts
- * to and actions as a MITM device.
- *
- * @param esp_gattc_cb_event_t event
- * @param esp_gatt_if_t gattc_if
- * @param esp_ble_gattc_cb_param_t *param
- */

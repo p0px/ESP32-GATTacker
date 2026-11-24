@@ -1,3 +1,20 @@
+#include "gatt_internal.h"
+
+/**
+ * esp_gap_cb
+ *
+ * Callback for the GAP.
+ * This handles scanning
+ * for advertisements and
+ * spoofing them once found.
+ * A GATT Client is then
+ * started to connect to the
+ * target device to clone the
+ * services.
+ *
+ * @param esp_gap_ble_cb_event_t event
+ * @param esp_ble_gap_cb_param_t *param
+ */
 void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
   if (shutdown_gatt_attack) return;
   uint8_t *adv_name = NULL;

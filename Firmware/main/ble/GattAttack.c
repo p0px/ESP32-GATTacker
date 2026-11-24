@@ -1,14 +1,4 @@
-#include "ble/GattAttack.h"
-#include "ble/GattAttackApp.h"
-#include "ble/ble.h"
-#include "wifi/ws.h"
-#include "uart/uart_bridge.h"
-#include "cJSON.h"
-#include "esp_timer.h"
-#include "ble/payload.h"
-#include <stdatomic.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "gatt_internal.h"
 
 clone_t clone;
 esp_ble_scan_params_t ble_scan_params = {
@@ -21,9 +11,3 @@ esp_ble_adv_params_t adv_params = {
   .own_addr_type = BLE_ADDR_TYPE_PUBLIC, .channel_map = ADV_CHNL_ALL,
   .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
-
-#include "gatt_core.inc"
-#include "gatt_server.inc"
-#include "gatt_client.inc"
-#include "gatt_gap.inc"
-#include "gatt_lifecycle.inc"

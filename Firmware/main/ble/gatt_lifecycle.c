@@ -1,4 +1,6 @@
-static void connection_failed(const char *operation) {
+#include "gatt_internal.h"
+
+void connection_failed(const char *operation) {
   connecting = false;
   connected = false;
   gattAttackState = GATT_ATTACK_STATE_CLIENT_CONNECT_FAIL;

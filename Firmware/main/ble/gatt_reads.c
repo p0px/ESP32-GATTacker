@@ -1,15 +1,17 @@
+#include "gatt_internal.h"
+
 // IDF's public read API assembles the entire target value, including Read Blob replies.
 // Keep the central's offset separately, then slice the hooked value for its own MTU.
-static bool att_busy() {
+bool att_busy() {
   return pending_write.active || clone.transactions.canceling ||
       clone.transactions.request.operation != AttNone;
 }
 
-static esp_gatt_status_t submission_status(esp_err_t result) {
+esp_gatt_status_t submission_status(esp_err_t result) {
   return result == ESP_ERR_NO_MEM ? ESP_GATT_NO_RESOURCES : ESP_GATT_ERROR;
 }
 
-static void att_reply(AttRequest request, esp_gatt_status_t status,
+void att_reply(AttRequest request, esp_gatt_status_t status,
                       esp_gatt_rsp_t *response) {
   if (request.abandoned) return;
   esp_err_t result = esp_ble_gatts_send_response(clone.gatts_if, request.central,
@@ -17,7 +19,7 @@ static void att_reply(AttRequest request, esp_gatt_status_t status,
   if (result != ESP_OK) ESP_LOGW(TAG, "ATT response failed: %s", esp_err_to_name(result));
 }
 
-static void log_att(AttRequest request, const char *operation,
+void log_att(AttRequest request, const char *operation,
                     esp_gatt_status_t status, const uint8_t *data, size_t length,
                     bool response) {
   char uuid[38] = {0};
@@ -30,7 +32,7 @@ static void log_att(AttRequest request, const char *operation,
   free(hex);
 }
 
-static void start_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+void start_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
   const typeof(param->read) *read = &param->read;
   if (!connected) {
     reply_cached_read(gatts_if, param);
@@ -60,7 +62,7 @@ static void start_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) 
   }
 }
 
-static void finish_read(bool descriptor, esp_ble_gattc_cb_param_t *param) {
+void finish_read(bool descriptor, esp_ble_gattc_cb_param_t *param) {
   const typeof(param->read) *read = &param->read;
   const AttRequest request = clone.transactions.request;
   if (request.operation != AttRead || request.descriptor != descriptor ||

@@ -1,6 +1,8 @@
+#include "gatt_internal.h"
+
 // A prepare response echoes the chunk only after the target accepts it. No assembled
 // scratch buffer is needed: the target owns the queued attributes until execute/cancel.
-static void start_prepare(esp_ble_gatts_cb_param_t *param) {
+void start_prepare(esp_ble_gatts_cb_param_t *param) {
   const typeof(param->write) *write = &param->write;
   GattTransactions *state = &clone.transactions;
   AttRequest request = {AttPrepare, write->conn_id, clone.target_client_conn_id,
@@ -36,7 +38,7 @@ static void start_prepare(esp_ble_gatts_cb_param_t *param) {
   state->prepared_owner = write->conn_id;
 }
 
-static void finish_prepare(esp_ble_gattc_cb_param_t *param) {
+void finish_prepare(esp_ble_gattc_cb_param_t *param) {
   GattTransactions *state = &clone.transactions;
   const AttRequest request = state->request;
   const typeof(param->write) *write = &param->write;
@@ -48,7 +50,7 @@ static void finish_prepare(esp_ble_gattc_cb_param_t *param) {
   att_reply(request, write->status, write->status == ESP_GATT_OK ? &state->prepared : NULL);
 }
 
-static void start_execute(esp_ble_gatts_cb_param_t *param) {
+void start_execute(esp_ble_gatts_cb_param_t *param) {
   GattTransactions *state = &clone.transactions;
   const typeof(param->exec_write) *execute = &param->exec_write;
   AttRequest request = {AttExecute, execute->conn_id, clone.target_client_conn_id,
@@ -68,7 +70,7 @@ static void start_execute(esp_ble_gatts_cb_param_t *param) {
   }
 }
 
-static void finish_execute(esp_ble_gattc_cb_param_t *param) {
+void finish_execute(esp_ble_gattc_cb_param_t *param) {
   GattTransactions *state = &clone.transactions;
   const typeof(param->exec_cmpl) *execute = &param->exec_cmpl;
   if (execute->conn_id != clone.target_client_conn_id) return;
@@ -85,7 +87,7 @@ static void finish_execute(esp_ble_gattc_cb_param_t *param) {
   att_reply(request, execute->status, NULL);
 }
 
-static void central_transactions_disconnected(uint16_t connection) {
+void central_transactions_disconnected(uint16_t connection) {
   GattTransactions *state = &clone.transactions;
   if (state->request.operation != AttNone && state->request.central == connection)
     state->request.abandoned = true;
@@ -98,7 +100,7 @@ static void central_transactions_disconnected(uint16_t connection) {
     esp_ble_gattc_close(clone.gattc_if, clone.target_client_conn_id);
 }
 
-static void target_transactions_disconnected() {
+void target_transactions_disconnected() {
   GattTransactions *state = &clone.transactions;
   const AttRequest request = state->request;
   state->request = (AttRequest){0};

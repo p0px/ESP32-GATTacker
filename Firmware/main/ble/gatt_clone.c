@@ -1,5 +1,7 @@
+#include "gatt_internal.h"
+
 // Bluetooth callbacks own setup. Stop quiesces the stack before freeing these services.
-static void clone_failed(const char *operation, int status) {
+void clone_failed(const char *operation, int status) {
   if (shutdown_gatt_attack) return;
   shutdown_gatt_attack = true;
   clone.server_ready = false;
@@ -39,7 +41,7 @@ static uint16_t clone_service_handles(size_t index) {
   return (uint16_t)(last - service->start_handle + 1);
 }
 
-static void clone_create_services() {
+void clone_create_services() {
   if (!clone.num_services) {
     clone_failed("empty service database", ESP_GATT_INVALID_HANDLE);
     return;
@@ -70,7 +72,7 @@ static void clone_create_services() {
   }
 }
 
-static void clone_register(esp_gatt_if_t interface, esp_ble_gatts_cb_param_t *param) {
+void clone_register(esp_gatt_if_t interface, esp_ble_gatts_cb_param_t *param) {
   if (param->reg.status != ESP_GATT_OK) {
     clone_failed("server registration", param->reg.status);
     return;
@@ -79,7 +81,7 @@ static void clone_register(esp_gatt_if_t interface, esp_ble_gatts_cb_param_t *pa
   clone_create_services();
 }
 
-static void clone_created(esp_ble_gatts_cb_param_t *param) {
+void clone_created(esp_ble_gatts_cb_param_t *param) {
   if (param->create.status != ESP_GATT_OK) {
     clone_failed("create service", param->create.status);
     return;
@@ -115,7 +117,7 @@ static void clone_created(esp_ble_gatts_cb_param_t *param) {
   if (result != ESP_OK) clone_failed("start service submission", result);
 }
 
-static void clone_started(esp_ble_gatts_cb_param_t *param) {
+void clone_started(esp_ble_gatts_cb_param_t *param) {
   if (param->start.status != ESP_GATT_OK) {
     clone_failed("start service", param->start.status);
     return;

@@ -1,11 +1,11 @@
-#include "esp_heap_caps.h"
+#include "gatt_internal.h"
 
 // All queue operations run on Bluedroid's GATT callback task. A successful
 // submission owns one callback; queued phone writes wait for that callback.
 static const size_t WRITE_QUEUE_LIMIT = 1024 * 1024;
 static const unsigned WRITE_COUNT_LIMIT = 2048;
 
-static void write_queue_reset();
+void write_queue_reset(void);
 
 static void write_queue_pace_central() {
   GattWriteQueue *queue = &clone.writes;
@@ -56,7 +56,7 @@ static void write_queue_pump() {
   }
 }
 
-static bool write_queue_add(uint16_t central, uint16_t handle, bool descriptor,
+bool write_queue_add(uint16_t central, uint16_t handle, bool descriptor,
                             bool response, const uint8_t *value, uint16_t length) {
   GattWriteQueue *queue = &clone.writes;
   size_t allocation = sizeof(GattQueuedWrite) + length;
@@ -99,14 +99,14 @@ static void write_queue_pop() {
   free(write);
 }
 
-static void write_queue_reset() {
+void write_queue_reset(void) {
   while (clone.writes.head) write_queue_pop();
   clone.writes.in_flight = false;
   clone.writes.congested = false;
   clone.writes.pacing_requested = false;
 }
 
-static void write_queue_target_disconnected() {
+void write_queue_target_disconnected(void) {
   if (!pending_write.active) return;
   // The target may reboot immediately after accepting a control write. A
   // local GATT_ERROR callback is not a target ATT error; relay the link loss.
@@ -117,7 +117,7 @@ static void write_queue_target_disconnected() {
     ESP_LOGW(TAG, "Central disconnect after target loss: %s", esp_err_to_name(result));
 }
 
-static void write_queue_central_disconnected(uint16_t central) {
+void write_queue_central_disconnected(uint16_t central) {
   GattWriteQueue *queue = &clone.writes;
   if (!queue->in_flight || !queue->head || queue->head->central != central) {
     write_queue_reset();
@@ -133,7 +133,7 @@ static void write_queue_central_disconnected(uint16_t central) {
   queue->pacing_requested = false;
 }
 
-static void write_queue_complete(bool descriptor, esp_ble_gattc_cb_param_t *param) {
+void write_queue_complete(bool descriptor, esp_ble_gattc_cb_param_t *param) {
   GattWriteQueue *queue = &clone.writes;
   GattQueuedWrite *write = queue->head;
   if (!queue->in_flight || !write || write->descriptor != descriptor ||
@@ -168,7 +168,7 @@ static void write_queue_complete(bool descriptor, esp_ble_gattc_cb_param_t *para
   write_queue_pump();
 }
 
-static void write_queue_resume(uint16_t target, bool congested) {
+void write_queue_resume(uint16_t target, bool congested) {
   if (target != clone.target_client_conn_id || congested) return;
   clone.writes.congested = false;
   write_queue_pump();

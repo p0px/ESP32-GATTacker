@@ -1,3 +1,23 @@
+#include "gatt_internal.h"
+
+/**
+ * client_event
+ *
+ * Handles the GATT Client
+ * events. This is our fake
+ * connection to the target
+ * device that discovers the
+ * services, clones them, and
+ * then start the GATT Server.
+ *
+ * The connection tries to stay
+ * open for a number of attempts
+ * to and actions as a MITM device.
+ *
+ * @param esp_gattc_cb_event_t event
+ * @param esp_gatt_if_t gattc_if
+ * @param esp_ble_gattc_cb_param_t *param
+ */
 void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                   esp_ble_gattc_cb_param_t *param) {
   if (shutdown_gatt_attack) return;
@@ -462,19 +482,3 @@ void client_event(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
       break;
   }
 }
-
-/**
- * esp_gap_cb
- *
- * Callback for the GAP.
- * This handles scanning
- * for advertisements and
- * spoofing them once found.
- * A GATT Client is then
- * started to connect to the
- * target device to clone the
- * services.
- *
- * @param esp_gap_ble_cb_event_t event
- * @param esp_ble_gap_cb_param_t *param
- */

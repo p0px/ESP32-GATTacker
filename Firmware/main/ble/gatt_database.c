@@ -1,3 +1,5 @@
+#include "gatt_internal.h"
+
 static bool same_uuid(const esp_bt_uuid_t *left, const esp_bt_uuid_t *right) {
   if (left->len != right->len) return false;
   if (left->len == ESP_UUID_LEN_16) return left->uuid.uuid16 == right->uuid.uuid16;
@@ -54,7 +56,7 @@ static bool same_characteristics(esp_gatt_if_t interface, uint16_t connection,
   return true;
 }
 
-static void clone_verify_service(esp_gatt_if_t interface, esp_ble_gattc_cb_param_t *param) {
+void clone_verify_service(esp_gatt_if_t interface, esp_ble_gattc_cb_param_t *param) {
   unsigned index = clone.verified_services++;
   if (clone.database_changed) return;
   if (index >= clone.num_services) {
@@ -71,7 +73,7 @@ static void clone_verify_service(esp_gatt_if_t interface, esp_ble_gattc_cb_param
 
 // These operations run on the Bluetooth callback task. Delete completions fence the
 // old database's lifetime; the target ACL and its pending MTU exchange stay alive.
-static void clone_service_deleted(esp_ble_gatts_cb_param_t *param) {
+void clone_service_deleted(esp_ble_gatts_cb_param_t *param) {
   if (shutdown_gatt_attack || !clone.refresh_pending || !clone.refresh_deleting) return;
   for (unsigned i = 0; i < clone.num_services; i++) {
     service_t *service = &clone.services[i];
@@ -97,7 +99,7 @@ static void clone_service_deleted(esp_ble_gatts_cb_param_t *param) {
   }
 }
 
-static void clone_verify_complete() {
+void clone_verify_complete() {
   if (shutdown_gatt_attack || clone.refresh_pending) return;
   if (!clone.database_changed && clone.verified_services == clone.num_services) return;
   clone.refresh_pending = true;
