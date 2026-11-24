@@ -81,6 +81,7 @@ void clone_created(esp_ble_gatts_cb_param_t *param);
 void clone_started(esp_ble_gatts_cb_param_t *param);
 void clone_verify_service(esp_gatt_if_t interface, esp_ble_gattc_cb_param_t *param);
 void clone_service_deleted(esp_ble_gatts_cb_param_t *param);
+void clone_refresh_central_disconnected(void);
 void clone_verify_complete(void);
 
 bool write_queue_add(uint16_t central, uint16_t handle, bool descriptor,

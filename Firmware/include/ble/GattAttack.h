@@ -63,8 +63,9 @@ typedef struct clone_t {
   uint16_t verified_services;
   bool database_changed;
   bool refresh_pending;
+  bool refresh_wait_central;
   bool handoff_pending;
-  uint16_t refresh_deleting;
+  uint16_t refresh_index;
   uint16_t stream_handle;
   uint32_t stream_bytes;
   int64_t stream_commit_us;

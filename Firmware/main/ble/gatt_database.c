@@ -71,32 +71,50 @@ void clone_verify_service(esp_gatt_if_t interface, esp_ble_gattc_cb_param_t *par
       !same_characteristics(interface, remote->conn_id, service);
 }
 
+static void clone_refresh_delete_next(void) {
+  if (shutdown_gatt_attack || !clone.refresh_pending) return;
+  while (clone.refresh_index < clone.num_services) {
+    service_t *service = &clone.services[clone.refresh_index++];
+    esp_err_t result = esp_ble_gatts_delete_service(service->service_handle);
+    if (result != ESP_OK) clone_failed("delete service submission", result);
+    return;
+  }
+  if (!connected) {
+    clone_failed("target lost during service refresh", ESP_GATT_ERROR);
+    return;
+  }
+  free_clone();
+  clone_init = false;
+  service_num = cloned_service_num = last_end_handle = 0;
+  // Search reads the already discovered remote cache; it does not reconnect.
+  esp_err_t result = esp_ble_gattc_search_service(clone.gattc_if,
+                                                 clone.target_client_conn_id, NULL);
+  if (result != ESP_OK) clone_failed("refresh service search", result);
+}
+
 // These operations run on the Bluetooth callback task. Delete completions fence the
 // old database's lifetime; the target ACL and its pending MTU exchange stay alive.
 void clone_service_deleted(esp_ble_gatts_cb_param_t *param) {
-  if (shutdown_gatt_attack || !clone.refresh_pending || !clone.refresh_deleting) return;
+  if (shutdown_gatt_attack || !clone.refresh_pending || !clone.refresh_index) return;
   for (unsigned i = 0; i < clone.num_services; i++) {
     service_t *service = &clone.services[i];
     if (service->service_handle != param->del.service_handle) continue;
     if (param->del.status != ESP_GATT_OK) {
+      ESP_LOGE(TAG, "Delete service %u UUID len %u status 0x%x", service->service_handle,
+               service->service_uuid.len, param->del.status);
       clone_failed("delete old service", param->del.status);
       return;
     }
     service->service_handle = 0;
-    if (--clone.refresh_deleting) return;
-    if (!connected) {
-      clone_failed("target lost during service refresh", ESP_GATT_ERROR);
-      return;
-    }
-    free_clone();
-    clone_init = false;
-    service_num = cloned_service_num = last_end_handle = 0;
-    // Search reads the already discovered remote cache; it does not reconnect.
-    esp_err_t result = esp_ble_gattc_search_service(clone.gattc_if,
-                                                   clone.target_client_conn_id, NULL);
-    if (result != ESP_OK) clone_failed("refresh service search", result);
+    clone_refresh_delete_next();
     return;
   }
+}
+
+void clone_refresh_central_disconnected(void) {
+  if (!clone.refresh_pending || !clone.refresh_wait_central) return;
+  clone.refresh_wait_central = false;
+  clone_refresh_delete_next();
 }
 
 void clone_verify_complete() {
@@ -115,24 +133,20 @@ void clone_verify_complete() {
     return;
   }
   clone.refresh_pending = true;
+  clone.refresh_index = 0;
   clone.server_ready = false;
   esp_ble_gap_stop_advertising();
   gatt_send_output("Target services changed; refreshing server", false);
   gattAttackState = GATT_ATTACK_STATE_CLIENT_CONNECTED;
   gatt_send_state(gattAttackState);
   if (uart_bridge_phone_connected()) {
+    clone.refresh_wait_central = true;
     esp_err_t result = esp_ble_gap_disconnect(clone.central_bda);
     if (result != ESP_OK) {
       clone_failed("disconnect central for rediscovery", result);
       return;
     }
+    return;
   }
-  for (unsigned i = 0; i < clone.num_services; i++) {
-    clone.refresh_deleting++;
-    esp_err_t result = esp_ble_gatts_delete_service(clone.services[i].service_handle);
-    if (result != ESP_OK) {
-      clone_failed("delete service submission", result);
-      return;
-    }
-  }
+  clone_refresh_delete_next();
 }

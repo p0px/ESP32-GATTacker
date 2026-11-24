@@ -359,6 +359,7 @@ after_find_write:
         pending_write.active = false;
       }
       if (central) release_target_after_bulk_write();
+      if (central) clone_refresh_central_disconnected();
       if (!shutdown_gatt_attack && !clone.refresh_pending && clone.server_ready)
         esp_ble_gap_start_advertising(&adv_params);
       break;
