@@ -7,6 +7,7 @@ bool initialized = false;
 #define MAX_DEVICES 50
 
 int device_count = 0;
+ble_device_t devices[50];
 SemaphoreHandle_t scan_complete_semaphore;
 static int requested_scan_seconds;
 

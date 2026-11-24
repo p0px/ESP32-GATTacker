@@ -13,6 +13,7 @@
 #include "ble/ble.h"
 #include "wifi/ws.h"
 #include "cJSON.h"
+#include "uart/uart_bridge.h"
 
 #define TAG "GattAttackApp"
 
@@ -158,6 +159,7 @@ void gatt_send_state(int state) {
   char *json = cJSON_Print(res);
 
   msg_clients(json);
+  uart_bridge_state();
 
   free(json);
   cJSON_Delete(res);
@@ -199,6 +201,8 @@ static void stop_session(void) {
   }
 
   gattAttackState = GATT_ATTACK_STATE_HOME;
+  uart_bridge_target("");
+  uart_bridge_phone(false);
   gatt_send_state((int)gattAttackState);
 };
 
@@ -209,7 +213,9 @@ static void start_session(esp_bd_addr_t target) {
   if (!params)
     return;
   memcpy(params->target, target, sizeof(esp_bd_addr_t));
-
+  char target_mac[18];
+  snprintf(target_mac, sizeof(target_mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+           target[0], target[1], target[2], target[3], target[4], target[5]);
   BaseType_t ret = xTaskCreate(&session_task, "gatk", 20000, params, 0, &gattTaskHandle);
   if (ret != pdPASS) {
     free(params);
@@ -217,6 +223,7 @@ static void start_session(esp_bd_addr_t target) {
     ESP_LOGE(TAG, "Cannot allocate attack task");
     return;
   }
+  uart_bridge_target(target_mac);
   gattAttackState = GATT_ATTACK_STATE_START;
   gatt_send_state((int)gattAttackState);
 };

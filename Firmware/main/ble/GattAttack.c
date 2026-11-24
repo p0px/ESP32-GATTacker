@@ -5,6 +5,8 @@
 #include "cJSON.h"
 #include <stdio.h>
 #include "ble/payload.h"
+#include "uart/uart_bridge.h"
+#include "wifi/ws.h"
 
 clone_t clone;
 esp_ble_scan_params_t ble_scan_params = {.scan_type = BLE_SCAN_TYPE_ACTIVE,

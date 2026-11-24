@@ -2,11 +2,13 @@
 #include "wifi/routes.h"
 #include "wifi/wifi.h"
 #include "dns_server.h"
+#include "uart/uart_bridge.h"
 
 #define TAG "App"
 
 void setup(void) {
   read_settings();
+  uart_bridge_start();
   wifi_init_softap();
   dns_server_config_t config = DNS_SERVER_CONFIG_SINGLE("*", "WIFI_AP_DEF");
   start_dns_server(&config);

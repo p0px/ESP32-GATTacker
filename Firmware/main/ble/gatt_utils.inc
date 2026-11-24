@@ -23,6 +23,8 @@ static void log_and_send_json(const char *operation, // e.g., "WRITE", "READ"
                               uint32_t gatt_if, uint32_t conn_id, uint32_t trans_id,
                               uint16_t handle, uint32_t status, const char *uuid,
                               const char *extra_data) {
+  uart_bridge_traffic(operation, direction, uuid, handle, extra_data);
+  if (!ws_has_clients()) return;
   cJSON *json = cJSON_CreateObject();
   cJSON_AddStringToObject(json, "operation", operation);
   cJSON_AddStringToObject(json, "direction", direction);
@@ -81,9 +83,10 @@ uint8_t *hex_string_to_bytes(const char *hex_string, uint16_t *out_len) {
 
 static void apply_hook(const char *type, const char *uuid, char **hex, uint8_t **bytes,
                        uint16_t *length) {
-  if (!*hex || !should_run_hooks())
+  if (!*hex)
     return;
-  char *reply = run_hook(type, uuid, *hex);
+  char *reply = uart_bridge_hook(type, uuid, *hex);
+  if (!reply && should_run_hooks()) reply = run_hook(type, uuid, *hex);
   if (!reply)
     return;
   uint16_t new_length = *length;

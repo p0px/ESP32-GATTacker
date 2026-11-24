@@ -1,5 +1,6 @@
 #include "wifi/routes.h"
 #include "control_http.h"
+#include "capture/capture_http.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -213,6 +214,7 @@ esp_err_t start_rest_server(void) {
 
   httpd_register_uri_handler(server, &ws);
   ESP_ERROR_CHECK(network_http_register(server));
+  ESP_ERROR_CHECK(capture_http_register(server));
   httpd_register_uri_handler(server, &app);
 
   return ESP_OK;

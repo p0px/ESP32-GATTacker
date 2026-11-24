@@ -134,6 +134,7 @@
     } else {
       clone.victim_client_conn_id = param->connect.conn_id;
       clone.server_conn_id = param->connect.conn_id;
+      uart_bridge_phone(true);
     }
 
     // update connection parameters for the peer device.
@@ -154,6 +155,8 @@
     if (pending_write.active && pending_write.conn_id == param->disconnect.conn_id) {
       pending_write.active = false;
     }
+    if (clone.victim_client_conn_id == param->disconnect.conn_id)
+      uart_bridge_phone(false);
     if (!shutdown_gatt_attack)
       esp_ble_gap_start_advertising(&adv_params);
     break;

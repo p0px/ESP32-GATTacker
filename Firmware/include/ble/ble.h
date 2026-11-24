@@ -29,9 +29,9 @@ typedef struct {
   int rssi;
 } ble_device_t;
 
-ble_device_t devices[50];
+extern ble_device_t devices[50];
 
-int device_count;
+extern int device_count;
 bool ble_stack_init();
 void ble_stack_deinit(bool release_memory);
 void start_ble_scan(int scan_duration_seconds, void (*callback)());
