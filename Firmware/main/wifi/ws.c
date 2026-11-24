@@ -248,7 +248,8 @@ esp_err_t ws_handler(httpd_req_t *req) {
       OPTS opt = (OPTS)option->valueint;
       switch (opt) {
       case WS_OPT_SET_WIFI:
-        ws_wifi_response(root, res);
+        cJSON_AddBoolToObject(res, "success", false);
+        cJSON_AddStringToObject(res, "error", "Use Wi-Fi Settings");
         resp_arg->res = cJSON_Print(res);
         break;
       case WS_OPT_REBOOT:

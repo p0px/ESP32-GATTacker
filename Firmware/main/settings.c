@@ -217,7 +217,6 @@ void read_settings(void) {
     write_string_to_nvs("wifi_pass", WIFI_PASS);
   }
 
-  ESP_LOGI(TAG, "wifi_pass: %s", WIFI_PASS);
 
   ret = read_blob_from_nvs("bt_mac", bt_mac_address, 6);
   if (ret != ESP_OK) {

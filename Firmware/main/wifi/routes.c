@@ -1,4 +1,5 @@
 #include "wifi/routes.h"
+#include "control_http.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -176,6 +177,7 @@ esp_err_t start_rest_server(void) {
   httpd_handle_t server = NULL;
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.close_fn = ws_on_close_handler;
+  config.max_uri_handlers = 20;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.lru_purge_enable = true;
   config.max_open_sockets = 10;
@@ -210,6 +212,7 @@ esp_err_t start_rest_server(void) {
   REST_CHECK(httpd_start(&server, &config) == ESP_OK, "Start server failed", err_start);
 
   httpd_register_uri_handler(server, &ws);
+  ESP_ERROR_CHECK(network_http_register(server));
   httpd_register_uri_handler(server, &app);
 
   return ESP_OK;
