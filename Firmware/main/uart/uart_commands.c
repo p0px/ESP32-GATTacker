@@ -53,7 +53,7 @@ char *uart_bridge_hook(const char *type, const char *uuid, const char *hex) {
 }
 
 static void reply(uint16_t id, const char *message) {
-  uart_emit(WireReply, id, message);
+  (void)uart_emit_wait(WireReply, id, message, 250);
 }
 
 void uart_command_target(const char *mac) {
@@ -97,7 +97,7 @@ void uart_command_state(void) {
   uart_bridge_event(event);
 }
 
-static void scan_results(void) {
+static bool scan_results(void) {
   for (int i = 0; i < device_count; i++) {
     char event[160];
     char name[32];
@@ -107,12 +107,13 @@ static void scan_results(void) {
     const uint8_t *mac = devices[i].bd_addr;
     snprintf(event, sizeof(event), "device\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%d\t%s",
              i, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], devices[i].rssi, name);
-    uart_bridge_event(event);
+    if (!uart_emit_wait(WireEvent, 0, event, 250)) return false;
   }
+  return true;
 }
 
-static void send_rules(void) {
-  if (!rule_mutex) return;
+static bool send_rules(void) {
+  if (!rule_mutex) return false;
   TrafficRule snapshot[RULE_COUNT];
   xSemaphoreTake(rule_mutex, portMAX_DELAY);
   memcpy(snapshot, rules, sizeof(snapshot));
@@ -122,8 +123,9 @@ static void send_rules(void) {
     char rule[160], event[200];
     rule_format(&snapshot[i], rule, sizeof(rule));
     snprintf(event, sizeof(event), "rule\t%u\t%lu\t%s", i, (unsigned long)current, rule);
-    uart_bridge_event(event);
+    if (!uart_emit_wait(WireEvent, 0, event, 250)) return false;
   }
+  return true;
 }
 
 static bool update_rule(char **fields, size_t count) {
@@ -143,24 +145,25 @@ static bool update_rule(char **fields, size_t count) {
   return true;
 }
 
-static void send_services(void) {
+static bool send_services(void) {
   unsigned count = 0;
   for (unsigned i = 0; i < clone.num_services && count < 64; i++) {
     char event[112], uuid[40];
     print_uuid(clone.services[i].service_uuid, uuid);
     snprintf(event, sizeof(event), "service\tS\t%u\t%s",
              clone.services[i].service_handle, uuid);
-    uart_bridge_event(event);
+    if (!uart_emit_wait(WireEvent, 0, event, 250)) return false;
     count++;
     for (unsigned j = 0; j < clone.services[i].num_chars && count < 64; j++) {
       const char_t *characteristic = &clone.services[i].chars[j];
       print_uuid(characteristic->char_uuid, uuid);
       snprintf(event, sizeof(event), "service\tC:%02X\t%u\t%s",
                characteristic->property, characteristic->char_handle, uuid);
-      uart_bridge_event(event);
+      if (!uart_emit_wait(WireEvent, 0, event, 250)) return false;
       count++;
     }
   }
+  return true;
 }
 
 static void execute(uint16_t id, char **f, size_t count) {
@@ -176,13 +179,13 @@ static void execute(uint16_t id, char **f, size_t count) {
                     "capture_sink_support\t0");
     uart_bridge_event(capture ? "capture_ram_support\t1" :
                     "capture_ram_support\t0");
-    send_rules();
+    if (!send_rules()) result = "error\trules unavailable; retry";
   } else if (!strcmp(f[0], "status")) {
     /* The common status snapshot follows each reply. */
   } else if (!strcmp(f[0], "results")) {
     if (gattAttackState == GATT_ATTACK_STATE_SCANNING)
       result = "error\tscan still running";
-    else scan_results();
+    else if (!scan_results()) result = "error\tdevice list interrupted; retry";
   } else if (!strcmp(f[0], "scan")) {
     if (gattAttackState != GATT_ATTACK_STATE_HOME &&
         gattAttackState != GATT_ATTACK_STATE_SCAN_RES)
@@ -227,9 +230,9 @@ static void execute(uint16_t id, char **f, size_t count) {
   } else if (!strcmp(f[0], "services")) {
     if (gattAttackState != GATT_ATTACK_STATE_RUNNING)
       result = "error\tno active services";
-    else send_services();
+    else if (!send_services()) result = "error\tservice list interrupted; retry";
   } else if (!strcmp(f[0], "rules")) {
-    send_rules();
+    if (!send_rules()) result = "error\trules unavailable; retry";
   } else if (!strcmp(f[0], "rule_set")) {
     if (!update_rule(f, count)) result = "error\trule invalid or revision stale; reload";
   } else if (!strcmp(f[0], "browser_on") || !strcmp(f[0], "browser_off")) {

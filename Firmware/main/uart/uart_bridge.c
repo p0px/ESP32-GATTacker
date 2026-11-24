@@ -39,18 +39,24 @@ static atomic_llong next_traffic_us;
 
 uint32_t uart_dropped(void) { return atomic_load(&dropped); }
 
-void uart_emit(WireKind kind, uint16_t id, const char *text) {
-  if (!outgoing || !text || strlen(text) >= WIRE_MAX) return;
+bool uart_emit_wait(WireKind kind, uint16_t id, const char *text, uint32_t wait_ms) {
+  if (!outgoing || !text || strlen(text) >= WIRE_MAX) return false;
   UartPacket *packet = heap_caps_malloc(sizeof(*packet), MALLOC_CAP_8BIT);
   if (!packet) {
     atomic_fetch_add(&dropped, 1);
-    return;
+    return false;
   }
   packet->kind = kind;
   packet->id = id;
   snprintf(packet->text, sizeof(packet->text), "%s", text);
-  if (xQueueSend(outgoing, packet, 0) != pdTRUE) atomic_fetch_add(&dropped, 1);
+  bool sent = xQueueSend(outgoing, packet, pdMS_TO_TICKS(wait_ms)) == pdTRUE;
+  if (!sent) atomic_fetch_add(&dropped, 1);
   heap_caps_free(packet);
+  return sent;
+}
+
+void uart_emit(WireKind kind, uint16_t id, const char *text) {
+  (void)uart_emit_wait(kind, id, text, 0);
 }
 
 void uart_bridge_event(const char *event) { uart_emit(WireEvent, 0, event); }

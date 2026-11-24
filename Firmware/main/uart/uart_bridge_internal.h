@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 void uart_emit(WireKind kind, uint16_t id, const char *text);
+bool uart_emit_wait(WireKind kind, uint16_t id, const char *text, uint32_t wait_ms);
 void uart_command_execute(uint16_t id, const char *text);
 void uart_command_state(void);
 void uart_command_target(const char *mac);

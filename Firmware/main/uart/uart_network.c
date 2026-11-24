@@ -10,9 +10,9 @@ static const char *json_text(const cJSON *json, const char *key) {
   return cJSON_IsString(value) ? value->valuestring : "";
 }
 
-static void snapshot(void) {
+static bool snapshot(void) {
   cJSON *json = network_status();
-  if (!json) return;
+  if (!json) return false;
   char ap[65], station[65], event[300];
   const char *ap_name = json_text(json, "ap_ssid");
   const char *station_name = json_text(json, "station_ssid");
@@ -25,18 +25,19 @@ static void snapshot(void) {
            cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json, "ap_active")),
            cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json, "mcp_enabled")),
            cJSON_IsNumber(reason) ? reason->valueint : 0, json_text(json, "error"));
-  uart_emit(WireEvent, 0, event);
+  bool sent = uart_emit_wait(WireEvent, 0, event, 250);
   cJSON_Delete(json);
+  return sent;
 }
 
-static void networks(void) {
+static bool networks(void) {
   cJSON *json = network_status();
-  if (!json) return;
+  if (!json) return false;
   bool scanning = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json, "scanning"));
   char event[128];
   snprintf(event, sizeof(event), "wifi_networks\t%d\t%s", scanning,
            json_text(json, "scan_error"));
-  uart_emit(WireEvent, 0, event);
+  bool sent = uart_emit_wait(WireEvent, 0, event, 250);
   if (!scanning) {
     const cJSON *entry;
     unsigned index = 0;
@@ -49,12 +50,13 @@ static void networks(void) {
       snprintf(event, sizeof(event), "wifi_network\t%u\t%s\t%d\t%d", index++, name,
                cJSON_IsNumber(rssi) ? rssi->valueint : -127,
                cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(entry, "secured")));
-      uart_emit(WireEvent, 0, event);
+      sent &= uart_emit_wait(WireEvent, 0, event, 250);
     }
     snprintf(event, sizeof(event), "wifi_networks_end\t%u", index);
-    uart_emit(WireEvent, 0, event);
+    sent &= uart_emit_wait(WireEvent, 0, event, 250);
   }
   cJSON_Delete(json);
+  return sent;
 }
 
 static const char *update(char **fields, size_t count) {
@@ -87,19 +89,24 @@ static const char *update(char **fields, size_t count) {
 bool uart_network_command(uint16_t id, char **fields, size_t count) {
   if (strncmp(fields[0], "wifi_", 5)) return false;
   const char *error = NULL;
-  if (!strcmp(fields[0], "wifi_get")) snapshot();
+  if (!strcmp(fields[0], "wifi_get")) {
+    if (!snapshot()) error = "Wi-Fi status unavailable; retry";
+  }
   else if (!strcmp(fields[0], "wifi_scan")) error = network_scan();
-  else if (!strcmp(fields[0], "wifi_networks")) networks();
+  else if (!strcmp(fields[0], "wifi_networks")) {
+    if (!networks()) error = "Wi-Fi network list interrupted; retry";
+  }
   else if (!strcmp(fields[0], "wifi_key")) {
     char event[48] = "wifi_key\t";
     network_key(event + 9);
-    uart_emit(WireEvent, 0, event);
+    if (!uart_emit_wait(WireEvent, 0, event, 250))
+      error = "MCP key unavailable; retry";
     memset(event, 0, sizeof(event));
   } else if (!strcmp(fields[0], "wifi_set")) error = update(fields, count);
   else error = "Unknown Wi-Fi command";
   char response[160];
   snprintf(response, sizeof(response), "%s\t%s", error ? "error" : "ok",
            error ? error : "saved");
-  uart_emit(WireReply, id, response);
+  (void)uart_emit_wait(WireReply, id, response, 250);
   return true;
 }
