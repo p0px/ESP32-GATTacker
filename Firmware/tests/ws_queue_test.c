@@ -13,16 +13,21 @@ typedef void *SemaphoreHandle_t;
 enum { ESP_OK = 0, pdTRUE = 1, portMAX_DELAY = 100, HTTPD_WS_TYPE_TEXT = 1,
        HTTPD_WS_CLIENT_WEBSOCKET = 2 };
 typedef struct { uint8_t *payload; size_t len; int type; } httpd_ws_frame_t;
-static int locked, queued, delivered;
+static int locked, queued, delivered, waited;
 static bool fail_queue, client_open = true;
+static bool unlock_on_wait;
 static void (*work[8])(void *);
 static void *args[8];
 #define ESP_LOGE(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
+#define pdMS_TO_TICKS(value) (value)
 static SemaphoreHandle_t xSemaphoreCreateMutex(void) { return &locked; }
 static int xSemaphoreTake(SemaphoreHandle_t mutex, int timeout) {
-  (void)timeout;
   assert(mutex);
+  if (locked && timeout && unlock_on_wait) {
+    waited = timeout;
+    locked = 0;
+  }
   if (locked) return 0;
   locked = 1;
   return pdTRUE;
@@ -59,12 +64,12 @@ int main(void) {
   const ws_client_t client = {(void *)1, 3};
   add_client(&client);
   assert(ws_has_clients());
-  for (int i = 0; i < 4; i++) assert(try_msg_clients("message", false));
+  for (int i = 0; i < 2; i++) assert(try_msg_clients("message", false));
   assert(!try_msg_clients("message", false));
   assert(try_msg_clients("request", true));
   assert(!try_msg_clients("request", true));
   drain();
-  assert(delivered == 5);
+  assert(delivered == 3);
 
   fail_queue = true;
   assert(!try_msg_clients("failed", false));
@@ -72,7 +77,21 @@ int main(void) {
   fail_queue = false;
   locked = 1;
   assert(!ws_has_clients() && !try_msg_clients("busy", false));
+  unlock_on_wait = true;
+  assert(try_msg_clients("request", true) && waited == 5);
+  drain();
+  unlock_on_wait = false;
   locked = 0;
+
+  char first[16301], second[14501];
+  memset(first, 'a', sizeof(first));
+  memset(second, 'b', sizeof(second));
+  first[16300] = 0;
+  second[14500] = 0;
+  assert(try_msg_clients(first, false));
+  assert(!try_msg_clients(second, false));
+  assert(try_msg_clients("reserved hook", true));
+  drain();
 
   char large[16386];
   memset(large, 'x', sizeof(large));
@@ -81,7 +100,7 @@ int main(void) {
   assert(!try_msg_clients(large, false));
   client_open = false;
   drain();
-  assert(delivered == 5);
+  assert(delivered == 6);
   large[16384] = 'x';
   large[16385] = 0;
   assert(!try_msg_clients(large, false) && !try_msg_clients(NULL, false));

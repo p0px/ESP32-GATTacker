@@ -38,7 +38,8 @@ ws_client_t *clients;
 static SemaphoreHandle_t ws_mutex = NULL;
 static atomic_uint pending_broadcasts = 0;
 static atomic_size_t pending_bytes = 0;
-static const unsigned MAX_PENDING_BROADCASTS = 4;
+static const unsigned MAX_PENDING_BROADCASTS = 2;
+static const size_t HOOK_RESERVED_BYTES = 2048;
 
 bool ws_has_clients(void) {
   if (!ws_mutex)
@@ -148,14 +149,15 @@ bool try_msg_clients(const char *msg, bool hook_request) {
   const size_t length = strlen(msg);
   if (length > 16384 || !ws_mutex)
     return false;
-  if (xSemaphoreTake(ws_mutex, 0) != pdTRUE)
+  if (xSemaphoreTake(ws_mutex, hook_request ? pdMS_TO_TICKS(5) : 0) != pdTRUE)
     return false;
   bool queued = false;
 
   for (int i = 0; i < num_clients; i++) {
     // Reserve one slot for a hook when telemetry has filled its allowance.
     if (atomic_load(&pending_broadcasts) >= MAX_PENDING_BROADCASTS + (hook_request ? 1U : 0U) ||
-        atomic_load(&pending_bytes) + length + 1 > 32768)
+        atomic_load(&pending_bytes) + length + 1 >
+            32768 - (hook_request ? 0 : HOOK_RESERVED_BYTES))
       break;
     ws_client_t cli = clients[i];
     struct async_resp_arg *resp_arg =

@@ -33,6 +33,7 @@ static SemaphoreHandle_t hook_signal = NULL;
 static const uint32_t HOOK_TIMEOUT_MS = 250;
 static const unsigned HOOK_TIMEOUT_LIMIT = 3;
 static unsigned hook_timeout_streak = 0; // Protected by hook_mux.
+static unsigned hook_queue_failure_streak = 0;
 static atomic_uint hook_last_ms = 0;
 
 GattAttackState gattAttackState = GATT_ATTACK_STATE_HOME;
@@ -115,16 +116,22 @@ char *run_hook(const char *type, const char *uuid, const char *value) {
       pending_hook_id = 0;
       const bool failed = !reply && !cancelled;
       hook_last_ms = elapsed * portTICK_PERIOD_MS;
-      if (reply)
+      if (reply) {
         hook_timeout_streak = 0;
-      if (failed && sent)
+        hook_queue_failure_streak = 0;
+      } else if (failed && sent) {
         ++hook_timeout_streak;
-      const bool disabled = failed && (!sent || hook_timeout_streak >= HOOK_TIMEOUT_LIMIT);
+        hook_queue_failure_streak = 0;
+      } else if (failed) {
+        ++hook_queue_failure_streak;
+        hook_timeout_streak = 0;
+      }
+      const unsigned misses = sent ? hook_timeout_streak : hook_queue_failure_streak;
+      const bool disabled = failed && misses >= HOOK_TIMEOUT_LIMIT;
       if (disabled) {
         hooks_enabled = false;
         hook_fault = sent ? 1 : 2;
       }
-      const unsigned misses = hook_timeout_streak;
       portEXIT_CRITICAL(&hook_mux);
       if (failed) {
         char message[160];
@@ -135,7 +142,8 @@ char *run_hook(const char *type, const char *uuid, const char *value) {
                    (unsigned long)HOOK_TIMEOUT_MS, misses, HOOK_TIMEOUT_LIMIT);
         } else {
           snprintf(message, sizeof(message),
-                   "Hooks disabled: request could not be queued; original payload forwarded");
+                   "%s: request could not be queued (%u/%u); original payload forwarded",
+                   disabled ? "Hooks disabled" : "Hook queue busy", misses, HOOK_TIMEOUT_LIMIT);
         }
         gatt_send_output(message, false);
         gatt_send_state(gattAttackState);
@@ -193,8 +201,9 @@ char *gatt_state_json(int state) {
                           fault == 1 ? "Hooks disabled after 3 consecutive hook reply timeouts "
                                        "(250 ms each); original traffic passes through. "
                                        "Re-enable to retry."
-                          : fault == 2 ? "Hooks disabled: request queue unavailable; original "
-                                         "traffic passes through. Re-enable hooks to retry."
+                          : fault == 2 ? "Hooks disabled after 3 consecutive request queue "
+                                         "failures; original traffic passes through. "
+                                         "Re-enable hooks to retry."
                                        : "");
   char *json = cJSON_PrintUnformatted(res);
   cJSON_Delete(res);
@@ -384,6 +393,7 @@ void gatt_web_event(GattAttackWebEventParams *ps) {
     portENTER_CRITICAL(&hook_mux);
     hook_fault = 0;
     hook_timeout_streak = 0;
+    hook_queue_failure_streak = 0;
     hooks_enabled = ps->enable;
     SemaphoreHandle_t signal = pending_hook_id ? hook_signal : NULL;
     portEXIT_CRITICAL(&hook_mux);

@@ -66,6 +66,7 @@ static void reset(void) {
   hooks_enabled = true;
   hook_fault = 0;
   hook_timeout_streak = 0;
+  hook_queue_failure_streak = 0;
   hook_last_ms = 0;
   semaphore = 0;
   now = sends = warnings = 0;
@@ -122,7 +123,18 @@ int main(void) {
   reset();
   enqueue_ok = false;
   assert(!run_hook("read", "uuid", "00"));
-  assert(now == 0 && !hooks_enabled && hook_fault == 2 && warnings == 1);
+  assert(now == 0 && hooks_enabled && !hook_fault && hook_queue_failure_streak == 1);
+  assert(!run_hook("read", "uuid", "00") && hooks_enabled);
+  assert(!run_hook("read", "uuid", "00") && !hooks_enabled && hook_fault == 2);
+  assert(warnings == 3);
+  reset();
+  enqueue_ok = false;
+  assert(!run_hook("read", "uuid", "00") && hooks_enabled);
+  enqueue_ok = true;
+  on_send = duplicate_reply;
+  reply = run_hook("read", "uuid", "00");
+  assert(reply && !hook_queue_failure_streak && hooks_enabled);
+  free(reply);
   reset();
   on_wait = cancel;
   assert(!run_hook("read", "uuid", "00") && now == 0 && warnings == 0);
