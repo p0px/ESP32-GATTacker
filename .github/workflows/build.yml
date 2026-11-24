@@ -44,7 +44,9 @@ jobs:
         run: git -C "$IDF_PATH" apply "$GITHUB_WORKSPACE/bad_blues.patch"
       - name: Build firmware and merged image
         working-directory: Firmware
-        run: idf.py build
+        run: |
+          . "$IDF_PATH/export.sh" >/dev/null
+          idf.py build
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
