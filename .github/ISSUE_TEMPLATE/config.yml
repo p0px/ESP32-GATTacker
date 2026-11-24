@@ -1,5 +1,1 @@
-blank_issues_enabled: false
-contact_links:
-  - name: GitLab Repository
-    url: https://gitlab.com/p0px/esp32-gattacker
-    about: Please report issues and contribute on our main GitLab repository.
+blank_issues_enabled: true

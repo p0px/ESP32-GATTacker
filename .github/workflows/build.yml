@@ -1,0 +1,87 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: UI/package-lock.json
+      - name: Build packaged UI
+        run: |
+          cd UI
+          npm ci
+          npm run build
+          cd ..
+          python3 scripts/package_ui.py
+      - name: Check bundled UI is current
+        run: |
+          if [ -n "$(git status --porcelain -- Firmware/data)" ]; then
+            git status --short -- Firmware/data
+            echo "Run npm run build in UI, then python3 scripts/package_ui.py and commit Firmware/data."
+            exit 1
+          fi
+
+  firmware:
+    name: ESP32-S3 firmware
+    needs: web
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.2
+    env:
+      IDF_TARGET: esp32s3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch ESP-IDF Bluedroid
+        run: git -C "$IDF_PATH" apply "$GITHUB_WORKSPACE/bad_blues.patch"
+      - name: Build firmware and merged image
+        working-directory: Firmware
+        run: idf.py build
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: |
+            Firmware/build/esp-gattacker-*.bin
+            Firmware/build/gattacker.bin
+            Firmware/build/spiffs.bin
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: release
+      - name: Publish merged firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/esp-gattacker-*.bin --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/esp-gattacker-*.bin \
+              --generate-notes
+          fi

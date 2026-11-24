@@ -5,6 +5,11 @@ a web UI and an authenticated MCP endpoint. An optional Flipper Zero app can con
 the same scan and session state over GPIO UART and save captures to its SD card.
 The firmware implementation is C; the bundled web UI is React.
 
+GitHub is the primary source for code, issues, and releases. GitHub Actions builds
+the web UI and ESP32-S3 firmware on pull requests, pushes to `main`, and version tags.
+Build artifacts are available from each workflow run; version tags also publish the
+merged firmware image to [GitHub Releases](https://github.com/p0px/ESP32-Gattacker/releases).
+
 ## Hardware
 
 The tested board is an ESP32-S3 with 8 MB octal PSRAM. The current configuration

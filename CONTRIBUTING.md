@@ -1,42 +1,21 @@
 # Contributing
 
-Thank you for considering contributing to `esp32-gattacker`!
+GitHub is the primary repository for ESP32 GATTacker. Please report bugs,
+request features, and open pull requests at
+[p0px/ESP32-Gattacker](https://github.com/p0px/ESP32-Gattacker).
 
-### Important Notice for GitHub Users
+For bug reports, include the ESP-IDF version, board and wiring, steps to
+reproduce, and relevant serial logs. Remove access keys and Wi-Fi credentials
+before sharing logs or captures.
 
-**This repository is a read-only mirror.**
+For code changes:
 
-If you are viewing this on **GitHub**, please note that we **do not usually** check issues or accept pull requests here.
+1. Fork the GitHub repository and create a branch.
+2. Build the UI with `npm ci` and `npm run build` from `UI/`.
+3. Run `python3 scripts/package_ui.py` from the repository root and commit any
+   changes under `Firmware/data/`.
+4. Build the firmware with ESP-IDF 5.5.2 after applying `bad_blues.patch` to
+   ESP-IDF, as described in the README.
+5. Open a GitHub pull request with the affected paths and manual test steps.
 
-To contribute, report bugs, or submit code, please visit our main repository on GitLab:
-
-[https://gitlab.com/p0px/esp32-gattacker](https://gitlab.com/p0px/esp32-gattacker)
-
----
-
-### How to Contribute
-
-We welcome contributions on our main GitLab repository. Here is how you can help:
-
-#### 1. Reporting Bugs
-This is the most common way to contribute. If you find a bug, please create an issue on GitLab.
-* **Check existing issues:** Verify if the bug has already been reported.
-* **Be descriptive:** Include the ESP-IDF version, hardware setup, and steps to reproduce the issue.
-* **Logs:** Please include relevant serial logs or backtraces.
-
-#### 2. Suggesting Enhancements
-Have an idea for a new feature?
-* Open an issue on GitLab tagged as "Feature Request."
-
-#### 3. Submitting Code (Merge Requests)
-If you want to contribute code fixes or new features, please follow the standard GitLab flow:
-
-1.  **Fork** the repository on GitLab.
-2.  **Create a Branch** for your specific feature or fix (`git checkout -b feature/update-something`).
-3.  **Commit** your changes with clear, descriptive messages.
-4.  **Push** the branch to your fork (`git push origin feature/update-something`).
-5.  **Submit a Merge Request (MR)** to the `main` branch of the upstream repository.
-
-> **Note:** Please ensure your code follows the existing style conventions of the project and that the project compiles without errors before submitting.
-
-Thank you for your support!
+GitHub Actions checks the packaged UI and firmware build on each pull request.
