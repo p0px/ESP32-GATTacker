@@ -7,6 +7,8 @@
 #include "freertos/semphr.h"
 #include "network_pair.h"
 #include "rules.h"
+#include "capture/capture_wire.h"
+#include "capture/capture_store.h"
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -160,9 +162,12 @@ static void execute(uint16_t id, char **f, size_t count) {
   GattAttackWebEventParams params = {.action = f[0], .id = -1};
   if (!strcmp(f[0], "hello")) {
     result = "ok\tGATTacker UART v1";
-    uart_bridge_event("capabilities\t");
-    uart_bridge_event("capture_sink_support\t0");
-    uart_bridge_event("capture_ram_support\t0");
+    bool capture = capture_store_ring() != NULL;
+    uart_bridge_event(capture ? "capabilities\thci_pcapng" : "capabilities\t");
+    uart_bridge_event(capture ? "capture_sink_support\t1" :
+                    "capture_sink_support\t0");
+    uart_bridge_event(capture ? "capture_ram_support\t1" :
+                    "capture_ram_support\t0");
     send_rules();
   } else if (!strcmp(f[0], "status")) {
     /* The common status snapshot follows each reply. */
@@ -233,6 +238,7 @@ static void execute(uint16_t id, char **f, size_t count) {
   snprintf(response, sizeof(response), "%s", result);
   reply(id, response);
   uart_command_state();
+  capture_wire_status();
 }
 
 void uart_command_execute(uint16_t id, const char *text) {
@@ -240,6 +246,11 @@ void uart_command_execute(uint16_t id, const char *text) {
   snprintf(record, sizeof(record), "%s", text);
   char *fields[12];
   size_t count = wire_fields(record, fields, 12);
+  if (count && capture_wire_receive(fields, count)) return;
+  if (count && capture_wire_command(id, fields, count)) {
+    uart_command_state();
+    return;
+  }
   if (count) execute(id, fields, count);
   else reply(id, "error\ttoo many fields");
 }

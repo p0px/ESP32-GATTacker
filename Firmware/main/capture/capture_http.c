@@ -1,5 +1,7 @@
 #include "capture/capture_http.h"
 #include "capture/capture_store.h"
+#include "capture/capture_export.h"
+#include "capture/flipper_sd.h"
 #include "control_http.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,6 +18,8 @@ static void add_number(cJSON *json, const char *key, double value) {
 
 static esp_err_t capture_status_http(httpd_req_t *request) {
   CaptureStoreStatus state = capture_store_status();
+  FlipperSdStatus flipper = flipper_sd_status();
+  CaptureExportStatus export_state = capture_export_status();
   const char *names[] = {"empty", "recording", "saving", "ready"};
   cJSON *json = cJSON_CreateObject();
   if (!json) return control_error(request, "503 Service Unavailable", "Out of memory");
@@ -37,20 +41,20 @@ static esp_err_t capture_status_http(httpd_req_t *request) {
   cJSON_AddBoolToObject(json, "export_failed", state.export_failed);
   cJSON_AddStringToObject(json, "reason", state.reason);
   cJSON *sd = cJSON_AddObjectToObject(json, "sd");
-  cJSON_AddBoolToObject(sd, "connected", uart_bridge_connected());
-  cJSON_AddBoolToObject(sd, "available", false);
-  cJSON_AddStringToObject(sd, "state", "idle");
-  add_number(sd, "id", 0);
-  add_number(sd, "packets", 0);
-  add_number(sd, "dropped", 0);
-  add_number(sd, "bytes", 0);
-  cJSON_AddBoolToObject(sd, "complete", false);
-  cJSON_AddStringToObject(sd, "path", "");
-  cJSON_AddStringToObject(sd, "error", "");
+  cJSON_AddBoolToObject(sd, "connected", flipper.connected);
+  cJSON_AddBoolToObject(sd, "available", flipper.available);
+  cJSON_AddStringToObject(sd, "state", flipper.state);
+  add_number(sd, "id", flipper.id);
+  add_number(sd, "packets", flipper.packets);
+  add_number(sd, "dropped", flipper.dropped);
+  add_number(sd, "bytes", flipper.bytes);
+  cJSON_AddBoolToObject(sd, "complete", flipper.complete);
+  cJSON_AddStringToObject(sd, "path", flipper.path);
+  cJSON_AddStringToObject(sd, "error", flipper.error);
   cJSON *export = cJSON_AddObjectToObject(json, "export");
-  cJSON_AddStringToObject(export, "state", "idle");
-  add_number(export, "bytes", 0);
-  add_number(export, "id", 0);
+  cJSON_AddStringToObject(export, "state", export_state.state);
+  add_number(export, "bytes", export_state.bytes);
+  add_number(export, "id", export_state.id);
   return control_json(request, json);
 }
 
@@ -82,11 +86,19 @@ static esp_err_t capture_control_http(httpd_req_t *request) {
   char destination[16];
   if (!read_number(request, start ? "seconds" : "id", &value, destination))
     return control_error(request, "400 Bad Request", "Expected a positive uint32 value");
-  if (strcmp(destination, "web"))
-    return control_error(request, "409 Conflict", "Flipper capture is unavailable");
-  const char *error = start ? capture_store_start(value, false, false) :
-                      !strcmp(request->uri, "/api/capture/stop") ?
-                      capture_store_stop(value) : capture_store_clear(value);
+  const char *error = NULL;
+  if (!strcmp(request->uri, "/api/capture/export"))
+    error = capture_export_start(value);
+  else if (!strcmp(destination, "flipper_live")) {
+    if (!start && strcmp(request->uri, "/api/capture/stop"))
+      return control_error(request, "400 Bad Request", "Manage saved files on Flipper");
+    error = flipper_sd_request(start, value);
+  } else if (start) {
+    if (!strcmp(destination, "flipper") && !flipper_sd_status().available)
+      error = "Open GATTacker on a Flipper with an SD card";
+    else error = capture_store_start(value, !strcmp(destination, "flipper"), false);
+  } else error = !strcmp(request->uri, "/api/capture/stop") ?
+                 capture_store_stop(value) : capture_store_clear(value);
   if (error) return control_error(request, "409 Conflict", error);
   return capture_status_http(request);
 }
@@ -160,6 +172,7 @@ esp_err_t capture_http_register(httpd_handle_t server) {
     {.uri = "/api/capture/start", .method = HTTP_POST, .handler = capture_control_http},
     {.uri = "/api/capture/stop", .method = HTTP_POST, .handler = capture_control_http},
     {.uri = "/api/capture/clear", .method = HTTP_POST, .handler = capture_control_http},
+    {.uri = "/api/capture/export", .method = HTTP_POST, .handler = capture_control_http},
     {.uri = "/api/capture/download", .method = HTTP_GET,
      .handler = capture_download_http},
   };

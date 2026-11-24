@@ -45,3 +45,5 @@ const char *capture_store_stop(uint32_t id);
 const char *capture_store_clear(uint32_t id);
 bool capture_store_download(CaptureDownload *download);
 void capture_store_release(void);
+CaptureRing *capture_store_ring(void);
+void capture_store_export_failed(uint32_t id);

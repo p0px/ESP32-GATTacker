@@ -4,6 +4,8 @@
 #include "App.h"
 #include "capture_ring.h"
 #include "capture/capture_store.h"
+#include "capture/capture_export.h"
+#include "capture/flipper_sd.h"
 #include "esp_log.h"
 #include "esp_system.h"
 
@@ -14,6 +16,8 @@ void app_main(void) {
   CaptureRing *capture = capture_ring_create();
   capture_vhci_attach(capture);
   capture_store_init(capture);
+  flipper_sd_init();
+  capture_export_init();
   setup();
 
   while(true) {

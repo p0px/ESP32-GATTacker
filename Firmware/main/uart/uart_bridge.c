@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "network_pair.h"
 #include "agent_api.h"
+#include "capture/capture_wire.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -105,7 +106,13 @@ static void transmit_task(void *context) {
   UartPacket packet;
   uint8_t frame[WIRE_FRAME_MAX];
   for (;;) {
-    if (xQueueReceive(outgoing, &packet, portMAX_DELAY) != pdTRUE) continue;
+    if (xQueueReceive(outgoing, &packet, 0) != pdTRUE) {
+      if (capture_wire_poll(packet.text, sizeof(packet.text))) {
+        packet.kind = WireEvent;
+        packet.id = 0;
+      } else if (xQueueReceive(outgoing, &packet, pdMS_TO_TICKS(10)) != pdTRUE)
+        continue;
+    }
     size_t size = wire_encode(packet.kind, packet.id, packet.text, frame, sizeof(frame));
     if (size) uart_write_bytes(UART_NUM_1, frame, size);
   }

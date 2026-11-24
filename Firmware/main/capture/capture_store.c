@@ -1,4 +1,5 @@
 #include "capture/capture_store.h"
+#include "capture/capture_export.h"
 #include "esp_heap_caps.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
@@ -59,6 +60,7 @@ static void finish(const CaptureStats *stats) {
 }
 
 static void poll(void) {
+  uint32_t export_id = 0;
   xSemaphoreTake(store.mutex, portMAX_DELAY);
   if (store.status.state == CaptureRecording || store.status.state == CaptureSaving) {
     for (unsigned i = 0; i < CAPTURE_RING_CAPACITY; i++) {
@@ -67,6 +69,7 @@ static void poll(void) {
       if (event == CaptureNone) break;
       if (event == CaptureEnd) {
         finish(&stats);
+        if (store.status.auto_export) export_id = store.status.id;
         break;
       }
       if (event != CaptureData) continue;
@@ -86,6 +89,8 @@ static void poll(void) {
     }
   }
   xSemaphoreGive(store.mutex);
+  if (export_id && capture_export_start(export_id))
+    capture_store_export_failed(export_id);
 }
 
 static void worker(void *context) {
@@ -209,5 +214,14 @@ void capture_store_release(void) {
   if (!store.mutex) return;
   xSemaphoreTake(store.mutex, portMAX_DELAY);
   store.status.downloading = false;
+  xSemaphoreGive(store.mutex);
+}
+
+CaptureRing *capture_store_ring(void) { return store.ring; }
+
+void capture_store_export_failed(uint32_t id) {
+  if (!store.mutex) return;
+  xSemaphoreTake(store.mutex, portMAX_DELAY);
+  if (store.status.id == id) store.status.export_failed = true;
   xSemaphoreGive(store.mutex);
 }
