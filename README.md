@@ -5,7 +5,9 @@ An ESP32 powered implementation of [GATTacker](https://github.com/securing/gatta
 The ESP32-S3 runs on its own. The optional
 [Flipper Zero companion app](https://github.com/p0px/ESP32-GATTacker-Flipper)
 controls it over GPIO UART and can save captures to SD.
-The Flipper repository currently requires access.
+
+> **Authorized use:** Use this tool only with devices and connections you own or have
+> explicit permission to test. Captures may contain sensitive data.
 
 ![GATTacker web UI showing a connected session and packet capture](./Doc/img/ui_running.png)
 
@@ -96,7 +98,7 @@ builds pull requests and pushes to `main`, with a merged firmware image in each 
 New version tags publish that image to [GitHub Releases](https://github.com/p0px/ESP32-GATTacker/releases).
 
 ## Bugs / TODO
-* TODO
-  * Random WIFI channel/Name
-* Future TODO:
-  - Replaying
+
+- Replaying from PCAPNGs
+- Supports unencrypted GATT operations (LE Security Mode 1, Level 1); paired and
+  encrypted GATT sessions are not yet supported.
