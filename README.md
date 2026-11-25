@@ -93,10 +93,6 @@ to its ESP-IDF checkout; use `idf.py flash` from `Firmware` to preserve NVS.
 For different UART pins or PSRAM, run `python scripts/configure_board.py --help`
 before building.
 
-GitHub is the primary development repository. [GitHub Actions](https://github.com/p0px/ESP32-GATTacker/actions)
-builds pull requests and pushes to `main`, with a merged firmware image in each successful run.
-New version tags publish that image to [GitHub Releases](https://github.com/p0px/ESP32-GATTacker/releases).
-
 ## Bugs / TODO
 
 - Replaying from PCAPNGs
